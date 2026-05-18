@@ -483,7 +483,7 @@ async def test_discord_auto_thread_tracks_participation(adapter, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_discord_thread_participation_tracked_on_dispatch(adapter, monkeypatch):
-    """When the bot processes a message in a thread, it tracks participation."""
+    """When the bot processes a human message in a thread, it tracks participation."""
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
     monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
 
