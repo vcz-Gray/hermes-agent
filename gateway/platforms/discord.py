@@ -85,6 +85,144 @@ def _clean_discord_id(entry: str) -> str:
     return entry.strip()
 
 
+def _has_explicit_discord_user_mention(content: str, user_id: int | str | None) -> bool:
+    """Return True only for a literal ``<@id>`` / ``<@!id>`` token in content.
+
+    Discord reply-pings can populate ``message.mentions`` for the replied user
+    even when the author did not type a mention into the message body. For
+    bot-to-bot routing we require an explicit token so two bots don't bounce
+    forever on implicit reply metadata alone.
+    """
+    if user_id is None:
+        return False
+    uid = str(user_id).strip()
+    if not uid:
+        return False
+    body = content or ""
+    return f"<@{uid}>" in body or f"<@!{uid}>" in body
+
+
+def _derive_auto_thread_title(raw_content: str) -> str:
+    """Fallback heuristic for Discord thread titles.
+
+    The primary path should use Hermes-managed LLM title generation. This
+    heuristic remains as a fast, dependency-free fallback when title generation
+    fails or times out.
+    """
+    content = (raw_content or "").strip()
+    if not content:
+        return "Hermes"
+
+    # Prefer the first visible line for thread-list readability.
+    content = content.splitlines()[0].strip()
+
+    # Remove Discord mention syntax and normalize custom emoji to plain labels.
+    content = re.sub(r"<@[!&]?\d+>", "", content)
+    content = re.sub(r"<#\d+>", "", content)
+    content = re.sub(r"<a?:([A-Za-z0-9_~\-]+):\d+>", r"\1", content)
+    content = re.sub(r"\s+", " ", content).strip()
+
+    # Trim common invocation prefixes so titles focus on the actual request.
+    # Examples: "Hermes, ...", "에르메스야 ...", "헤르메스: ..."
+    content = re.sub(
+        r"^((?:[A-Za-z0-9_~\-]+\s+)*)?(?:hermes|에르메스|헤르메스)(?:야|아)?(?:\s*[,:;!?.~\-]+\s*|\s+)",
+        lambda m: (m.group(1) or ""),
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    # Drop lightweight request lead-ins that read awkwardly as titles.
+    content = re.sub(
+        r"^(?:please\s+|pls\s+|plz\s+|좀\s+|한번\s+|혹시\s+)",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove common location/setup filler that rarely helps the thread list.
+    content = re.sub(
+        r"^(?:이|요)\s*(?:디스코드\s*)?채널(?:에서)?\s+",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+    content = re.sub(r"^(?:여기|여기서)\s+", "", content, flags=re.IGNORECASE)
+
+    # Request phrasing tends to make poor titles. Strip common polite endings so
+    # the remaining noun phrase can stand on its own in the thread list.
+    content = re.sub(
+        r"\s*(?:부탁(?:해|해요|드립니다)?|도와줘|도와주세요|알려줘|알려주세요|봐줘|봐주세요|해줘|해주세요|해줄래|가능할까|가능한지부터\s*확인해줘)\s*$",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    # Collapse title-management requests into something title-like rather than
+    # echoing the full sentence. Example: "새로운 쓰레드 제목 자연스럽게 정리해줘"
+    # -> "제목 정리"
+    content = re.sub(r"\bnew\b", "새", content, flags=re.IGNORECASE)
+    content = re.sub(r"새로운", "새", content)
+    content = re.sub(r"쓰레드", "스레드", content, flags=re.IGNORECASE)
+    content = re.sub(r"\s+", " ", content).strip()
+    content = re.sub(r"\s*(?:자연스럽게|예쁘게|깔끔하게|적당히)\s+", " ", content)
+    content = re.sub(r"\s+좀\s+", " ", content)
+    content = re.sub(
+        r"\s*(정리|설정|수정)(?:되게|되도록|하는\s*걸로)?\s*$",
+        lambda m: f" {m.group(1)}",
+        content,
+    )
+    content = re.sub(r"\s+", " ", content).strip()
+
+    # Decorative custom-emoji labels are useful for understanding intent but look
+    # awkward once we also prepend a real emoji to the final title.
+    content = re.sub(r"^(?:sparkles|stars?|fire|rocket|pushpin|warning|boom)\s+", "", content, flags=re.IGNORECASE)
+
+    # Reduce common meta requests to a compact noun phrase.
+    title_meta_pattern = re.compile(
+        r"^(?P<prefix>(?:[A-Za-z0-9_~\-]+\s+)*)?(?:(?:이|요)\s*)?(?:(?:디스코드\s*)?채널(?:에서)?\s+)?(?:(?:새|새로운)\s+)?(?:스레드|thread)\s+제목(?:을|를)?\s*(?P<tail>.*)$",
+        re.IGNORECASE,
+    )
+    match = title_meta_pattern.match(content)
+    if match:
+        prefix = (match.group("prefix") or "").strip()
+        tail = (match.group("tail") or "").strip()
+        if tail:
+            tail = re.sub(r"^(?:자동(?:으로)?\s+)?", "", tail, flags=re.IGNORECASE)
+            tail = re.sub(r"\s+", " ", tail).strip()
+            content = f"{' '.join(part for part in [prefix, '제목', tail] if part)}".strip()
+        else:
+            content = f"{' '.join(part for part in [prefix, '제목'] if part)}".strip()
+
+    # Remove wrapping punctuation/quotes and collapse whitespace.
+    content = content.strip(" \t\r\n-–—:;,.!?~`()[]{}'\"“”‘’")
+    content = re.sub(r"\s+", " ", content).strip()
+
+    if not content:
+        return "🧵 Hermes"
+
+    emoji = "🧵"
+    lower = content.lower()
+    if any(token in content for token in ("버그", "오류", "에러", "실패", "로그인 문제")):
+        emoji = "🐛"
+    elif any(token in content for token in ("배포", "릴리즈", "출시", "런칭")):
+        emoji = "🚀"
+    elif any(token in content for token in ("제목", "스레드", "thread")) or "thread" in lower:
+        emoji = "🧵"
+    elif any(token in content for token in ("설정", "구성", "config", "configuration")) or "config" in lower:
+        emoji = "⚙️"
+    elif any(token in content for token in ("문서", "가이드", "정리", "요약")):
+        emoji = "📝"
+
+    max_title_len = 15
+    prefix = f"{emoji} "
+    allowed = max(4, max_title_len - len(prefix))
+    if len(content) <= allowed:
+        return f"{prefix}{content}"
+    if allowed >= 2:
+        return f"{prefix}{content[:allowed - 1].rstrip()}…"
+    return f"{prefix}{content[:allowed]}"
+
+
 def check_discord_requirements() -> bool:
     """Check if Discord dependencies are available.
 
@@ -751,7 +889,12 @@ class DiscordAdapter(BasePlatformAdapter):
                     if allow_bots == "none":
                         return
                     elif allow_bots == "mentions":
-                        if not self._client.user or self._client.user not in message.mentions:
+                        client_user = getattr(self._client, "user", None)
+                        explicit_mention = _has_explicit_discord_user_mention(
+                            getattr(message, "content", ""),
+                            getattr(client_user, "id", None),
+                        )
+                        if not client_user or not explicit_mention:
                             return
                     # "all" falls through; bot is permitted — skip the
                     # human-user allowlist below (bots aren't in it).
@@ -3695,6 +3838,11 @@ class DiscordAdapter(BasePlatformAdapter):
         if limit <= 0:
             return ""
 
+        # Lightweight test doubles and synthetic channels may not implement
+        # discord.py's history() API. In that case there is no backfill to fetch.
+        if not callable(getattr(channel, "history", None)):
+            return ""
+
         # Determine which bot messages to include in context
         allow_bots_raw = os.getenv("DISCORD_ALLOW_BOTS", "none").lower().strip()
         include_other_bots = allow_bots_raw != "none"
@@ -3873,27 +4021,50 @@ class DiscordAdapter(BasePlatformAdapter):
 
         Returns the created thread object, or ``None`` on failure.
         """
-        # Build a short thread name from the message. Strip Discord mention
-        # syntax (users / roles / channels) so thread titles don't end up
-        # showing raw <@id>, <@&id>, or <#id> markers — the ID isn't
-        # meaningful to humans glancing at the thread list (#6336).
-        content = (message.content or "").strip()
-        # <@123>, <@!123>, <@&123>, <#123> — collapse to empty; normalize spaces.
-        content = re.sub(r"<@[!&]?\d+>", "", content)
-        content = re.sub(r"<#\d+>", "", content)
-        content = re.sub(r"\s+", " ", content).strip()
-        thread_name = content[:80] if content else "Hermes"
-        if len(content) > 80:
-            thread_name = thread_name[:77] + "..."
+        starter_message = message
+
+        # If the user invoked Hermes by replying to an existing channel message,
+        # prefer threading off the referenced/original message rather than the
+        # mention message itself. This makes the resulting Discord thread hang
+        # off the source post the user was pointing at.
+        reference = getattr(message, "reference", None)
+        reference_id = getattr(reference, "message_id", None)
+        if reference_id:
+            referenced_message = getattr(reference, "resolved", None)
+            if referenced_message is None:
+                try:
+                    fetch_message = getattr(message.channel, "fetch_message", None)
+                    if fetch_message is not None:
+                        referenced_message = await fetch_message(int(reference_id))
+                except Exception as exc:
+                    logger.debug(
+                        "[%s] Failed to resolve referenced message %s for auto-threading: %s",
+                        self.name,
+                        reference_id,
+                        exc,
+                    )
+
+            if referenced_message is not None:
+                existing_thread = getattr(referenced_message, "thread", None)
+                if existing_thread is not None:
+                    return existing_thread
+                starter_message = referenced_message
+
+        # Generate the thread title via Hermes's LLM-backed title generator so
+        # the result is actually title-like rather than a mechanically trimmed
+        # copy of the raw request. Fall back to the local heuristic on failure.
+        content = (getattr(starter_message, "content", None) or message.content or "").strip()
+        thread_name = await self._generate_thread_title(content)
 
         try:
-            thread = await message.create_thread(name=thread_name, auto_archive_duration=1440)
+            thread = await starter_message.create_thread(name=thread_name, auto_archive_duration=1440)
             return thread
         except Exception as direct_error:
             display_name = getattr(getattr(message, "author", None), "display_name", None) or "unknown user"
             reason = f"Auto-threaded from mention by {display_name}"
             try:
-                seed_msg = await message.channel.send(f"\U0001f9f5 Thread created by Hermes: **{thread_name}**")
+                seed_channel = getattr(starter_message, "channel", None) or message.channel
+                seed_msg = await seed_channel.send(f"\U0001f9f5 Thread created by Hermes: **{thread_name}**")
                 thread = await seed_msg.create_thread(
                     name=thread_name,
                     auto_archive_duration=1440,
@@ -3902,12 +4073,57 @@ class DiscordAdapter(BasePlatformAdapter):
                 return thread
             except Exception as fallback_error:
                 logger.warning(
-                    "[%s] Auto-thread creation failed. Direct error: %s. Fallback error: %s",
+                    "[%s] Discord rejected auto-thread creation: direct=%s fallback=%s",
                     self.name,
                     direct_error,
                     fallback_error,
                 )
                 return None
+
+    async def _generate_thread_title(self, raw_content: str) -> str:
+        """Generate a Discord thread title via Hermes's internal LLM path.
+
+        Falls back to the local heuristic if auxiliary/main-model title
+        generation fails for any reason.
+        """
+        content = (raw_content or "").strip()
+        if not content:
+            return _derive_auto_thread_title(content)
+        try:
+            from agent.title_generator import generate_discord_thread_title
+            title = await asyncio.to_thread(generate_discord_thread_title, content)
+            cleaned = " ".join(str(title or "").split()).strip()
+            if cleaned:
+                return cleaned
+        except Exception as exc:
+            logger.debug("[%s] LLM thread-title generation crashed; falling back: %s", self.name, exc)
+        return _derive_auto_thread_title(content)
+
+    async def _maybe_retitle_existing_thread(self, message: 'DiscordMessage') -> None:
+        """Rename the current Discord thread before the first Hermes response.
+
+        This handles the case where the user starts inside an already-existing
+        thread rather than triggering Hermes auto-thread creation from a channel
+        mention. In that flow there is no ``create_thread(name=...)`` call, so we
+        opportunistically retitle the thread in-place before responding.
+        """
+        try:
+            channel = getattr(message, "channel", None)
+            if channel is None:
+                return
+            current_name = (getattr(channel, "name", None) or "").strip()
+            content = (getattr(message, "content", None) or "").strip()
+            derived_name = await self._generate_thread_title(content)
+            if not derived_name or derived_name == current_name:
+                return
+            edit = getattr(channel, "edit", None)
+            if edit is None:
+                return
+            await edit(name=derived_name, reason="Hermes normalized thread title from first message")
+            self._threads.mark(str(getattr(channel, "id", "")))
+            logger.info("[%s] Retitled existing thread %s -> %s", self.name, current_name or "(untitled)", derived_name)
+        except Exception as exc:
+            logger.debug("[%s] Could not retitle existing thread before first response: %s", self.name, exc)
 
     async def create_handoff_thread(
         self,
@@ -4492,22 +4708,28 @@ class DiscordAdapter(BasePlatformAdapter):
             )
 
             # Skip the mention check if the message is in a thread where
-            # the bot has previously participated (auto-created or replied in)
-            # — UNLESS thread_require_mention is enabled, in which case threads
-            # are gated the same as channels.  Useful when multiple bots share
-            # a thread.
+            # the bot has previously participated (auto-created or explicitly
+            # set up) — UNLESS thread_require_mention is enabled, in which case
+            # threads are gated the same as channels. Bot-authored messages are
+            # stricter: even inside an established thread, another bot must
+            # explicitly mention us in the content to trigger processing. This
+            # prevents bot-to-bot reply loops caused by implicit reply metadata
+            # / reply-pings.
             in_bot_thread = (
                 is_thread
                 and thread_id in self._threads
                 and not self._discord_thread_require_mention()
+                and not getattr(message.author, "bot", False)
             )
 
             if require_mention and not is_free_channel and not in_bot_thread:
                 if self._client.user not in message.mentions and not mention_prefix:
                     return
-        # Auto-thread: when enabled, automatically create a thread for every
-        # @mention in a text channel so each conversation is isolated (like Slack).
-        # Messages already inside threads or DMs are unaffected.
+        # Auto-thread: when enabled, automatically create (or reuse) a thread
+        # for every @mention in a text channel so each conversation is isolated
+        # (like Slack). Messages already inside threads or DMs are unaffected.
+        # If the mention is sent as a Discord reply to another channel message,
+        # thread off that referenced/original message instead of the mention.
         # no_thread_channels: channels where bot responds directly without thread.
         auto_threaded_channel = None
         if not is_thread and not isinstance(message.channel, discord.DMChannel):
@@ -4515,8 +4737,7 @@ class DiscordAdapter(BasePlatformAdapter):
             no_thread_channels = {ch.strip() for ch in no_thread_channels_raw.split(",") if ch.strip()}
             skip_thread = bool(channel_ids & no_thread_channels) or is_free_channel
             auto_thread = os.getenv("DISCORD_AUTO_THREAD", "true").lower() in {"true", "1", "yes"}
-            is_reply_message = getattr(message, "type", None) == discord.MessageType.reply
-            if auto_thread and not skip_thread and not is_voice_linked_channel and not is_reply_message:
+            if auto_thread and not skip_thread and not is_voice_linked_channel:
                 thread = await self._auto_create_thread(message)
                 if thread:
                     parent_channel_id = str(message.channel.id)
@@ -4524,6 +4745,8 @@ class DiscordAdapter(BasePlatformAdapter):
                     thread_id = str(thread.id)
                     auto_threaded_channel = thread
                     self._threads.mark(thread_id)
+        elif is_thread and thread_id and thread_id not in self._threads:
+            await self._maybe_retitle_existing_thread(message)
 
         all_attachments = list(message.attachments) + snapshot_attachments
 
@@ -4785,10 +5008,12 @@ class DiscordAdapter(BasePlatformAdapter):
             channel_context=_channel_context,
         )
 
-        # Track thread participation so the bot won't require @mention for
-        # follow-up messages in threads it has already engaged in.
-        if thread_id:
-            self._threads.mark(thread_id)
+        # Do NOT mark every explicitly mentioned thread reply as a durable
+        # no-mention thread.  That caused one-shot mid-thread mentions (e.g.
+        # temporarily calling in another bot) to permanently opt that bot into
+        # future unmentioned replies for the whole thread.  Durable thread
+        # participation is granted only at thread creation / explicit thread
+        # setup sites such as auto-threading and /thread.
 
         # Only batch plain text messages — commands, media, etc. dispatch
         # immediately since they won't be split by the Discord client.

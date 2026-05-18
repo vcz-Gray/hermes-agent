@@ -99,6 +99,7 @@ def adapter(monkeypatch):
     monkeypatch.setattr(discord_platform.discord, "DMChannel", FakeDMChannel, raising=False)
     monkeypatch.setattr(discord_platform.discord, "Thread", FakeThread, raising=False)
     monkeypatch.setattr(discord_platform.discord, "ForumChannel", FakeForumChannel, raising=False)
+    monkeypatch.setenv("DISCORD_ALLOWED_CHANNELS", "*")
 
     # Clear DISCORD_* env vars the test file exercises so tests don't leak
     # process-env state from the contributor's shell into per-test behaviour.
@@ -480,8 +481,8 @@ async def test_discord_auto_thread_tracks_participation(adapter, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_discord_thread_participation_tracked_on_dispatch(adapter, monkeypatch):
-    """When the bot processes a message in a thread, it tracks participation."""
+async def test_discord_explicit_thread_dispatch_does_not_grant_durable_participation(adapter, monkeypatch):
+    """Processing a normal existing-thread message should not permanently skip future mention checks."""
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
     monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
 
@@ -490,7 +491,7 @@ async def test_discord_thread_participation_tracked_on_dispatch(adapter, monkeyp
 
     await adapter._handle_message(message)
 
-    assert "777" in adapter._threads
+    assert "777" not in adapter._threads
 
 
 @pytest.mark.asyncio

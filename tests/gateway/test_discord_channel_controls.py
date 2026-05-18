@@ -62,6 +62,12 @@ class FakeTextChannel:
         self.guild = SimpleNamespace(name=guild_name)
         self.topic = None
 
+    def history(self, *, limit, before, after=None, oldest_first=None):
+        async def _iter():
+            return
+            yield
+        return _iter()
+
 
 class FakeThread:
     def __init__(self, channel_id: int = 1, name: str = "thread", parent=None, guild_name: str = "Hermes Server"):
@@ -72,11 +78,32 @@ class FakeThread:
         self.guild = getattr(parent, "guild", None) or SimpleNamespace(name=guild_name)
         self.topic = None
 
+    def history(self, *, limit, before, after=None, oldest_first=None):
+        async def _iter():
+            return
+            yield
+        return _iter()
+
 
 @pytest.fixture
 def adapter(monkeypatch):
     monkeypatch.setattr(discord_platform.discord, "DMChannel", FakeDMChannel, raising=False)
     monkeypatch.setattr(discord_platform.discord, "Thread", FakeThread, raising=False)
+
+    for _var in (
+        "DISCORD_REQUIRE_MENTION",
+        "DISCORD_THREAD_REQUIRE_MENTION",
+        "DISCORD_FREE_RESPONSE_CHANNELS",
+        "DISCORD_AUTO_THREAD",
+        "DISCORD_NO_THREAD_CHANNELS",
+        "DISCORD_ALLOWED_CHANNELS",
+        "DISCORD_IGNORED_CHANNELS",
+        "DISCORD_HISTORY_BACKFILL",
+        "DISCORD_HISTORY_BACKFILL_LIMIT",
+        "DISCORD_ALLOW_BOTS",
+    ):
+        monkeypatch.delenv(_var, raising=False)
+    monkeypatch.setenv("DISCORD_ALLOWED_CHANNELS", "*")
 
     config = PlatformConfig(enabled=True, token="fake-token")
     adapter = DiscordAdapter(config)
@@ -198,6 +225,35 @@ async def test_dms_unaffected_by_ignored_channels(adapter, monkeypatch):
     await adapter._handle_message(message)
 
     adapter.handle_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_explicit_thread_mention_is_one_shot(adapter, monkeypatch):
+    """An explicit @mention inside an existing thread should not grant future no-mention replies."""
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+    monkeypatch.setenv("DISCORD_ALLOWED_CHANNELS", "*")
+    monkeypatch.delenv("DISCORD_IGNORED_CHANNELS", raising=False)
+    monkeypatch.delenv("DISCORD_FREE_RESPONSE_CHANNELS", raising=False)
+
+    bot_user = adapter._client.user
+    parent = FakeTextChannel(channel_id=700, name="ops")
+    thread = FakeThread(channel_id=701, name="existing-thread", parent=parent)
+
+    first_message = make_message(
+        channel=thread,
+        content=f"<@{bot_user.id}> check this",
+        mentions=[bot_user],
+    )
+    await adapter._handle_message(first_message)
+
+    adapter.handle_message.assert_awaited_once()
+    adapter.handle_message.reset_mock()
+
+    second_message = make_message(channel=thread, content="follow-up without mention")
+    await adapter._handle_message(second_message)
+
+    adapter.handle_message.assert_not_awaited()
 
 
 # ── no_thread_channels ───────────────────────────────────────────────

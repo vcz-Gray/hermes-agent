@@ -25,6 +25,16 @@ _TITLE_PROMPT = (
     "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes."
 )
 
+_DISCORD_THREAD_TITLE_PROMPT = (
+    "Generate a Discord thread title for the user's opening message. "
+    "Hermes is creating or renaming the thread before replying. "
+    "Return ONLY the final thread title, nothing else. "
+    "Requirements: include exactly one relevant emoji at the start, then a space, then a concise title-like label. "
+    "Prefer Korean when the user wrote in Korean. Avoid request-style wording like 해줘/부탁해/봐줘. "
+    "Do not echo raw mentions. Aim for about 15 characters total including emoji when possible. "
+    "Good examples: 🧵 제목 정리, 🚀 배포 체크, 🐛 로그인 버그"
+)
+
 
 def generate_title(
     user_message: str,
@@ -81,6 +91,54 @@ def generate_title(
                 failure_callback("title generation", e)
             except Exception:
                 logger.debug("Title generation failure_callback raised", exc_info=True)
+        return None
+
+
+def generate_discord_thread_title(
+    user_message: str,
+    timeout: float = 20.0,
+    failure_callback: Optional[FailureCallback] = None,
+    main_runtime: dict = None,
+) -> Optional[str]:
+    """Generate a Discord thread title from the user's opening message.
+
+    This is a synchronous helper intended for gateway paths that must decide the
+    thread title *before* the first response is sent. The caller may wrap it in
+    ``asyncio.to_thread`` from async code.
+    """
+    user_snippet = user_message[:500] if user_message else ""
+    messages = [
+        {"role": "system", "content": _DISCORD_THREAD_TITLE_PROMPT},
+        {"role": "user", "content": user_snippet},
+    ]
+
+    try:
+        response = call_llm(
+            task="title_generation",
+            messages=messages,
+            max_tokens=120,
+            temperature=0.2,
+            timeout=timeout,
+            main_runtime=main_runtime,
+        )
+        title = (response.choices[0].message.content or "").strip()
+        title = title.strip('"\'')
+        if title.lower().startswith("title:"):
+            title = title[6:].strip()
+        title = " ".join(title.split())
+        if not title:
+            return None
+        if len(title) > 24:
+            title = title[:23].rstrip() + "…"
+        return title
+    except Exception as e:
+        logger.warning("Discord thread title generation failed: %s", e)
+        logger.debug("Discord thread title generation traceback", exc_info=True)
+        if failure_callback is not None:
+            try:
+                failure_callback("discord thread title generation", e)
+            except Exception:
+                logger.debug("Discord thread title failure_callback raised", exc_info=True)
         return None
 
 
