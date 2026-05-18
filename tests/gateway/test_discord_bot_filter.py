@@ -52,10 +52,15 @@ class TestDiscordBotFilter(unittest.TestCase):
             if allow == "none":
                 return False
             elif allow == "mentions":
-                if not client_user or client_user not in message.mentions:
+                uid = getattr(client_user, "id", None)
+                explicit = bool(uid) and (
+                    f"<@{uid}>" in (message.content or "")
+                    or f"<@!{uid}>" in (message.content or "")
+                )
+                if not client_user or not explicit:
                     return False
             # "all" falls through
-        
+
         return True  # message accepted
 
     def test_own_messages_always_ignored(self):
@@ -85,19 +90,27 @@ class TestDiscordBotFilter(unittest.TestCase):
         self.assertTrue(self._run_filter(msg, "all"))
 
     def test_allow_bots_mentions_rejects_without_mention(self):
-        """With allow_bots=mentions, bot messages without @mention are rejected."""
+        """With allow_bots=mentions, bot messages without explicit @mention are rejected."""
         our_user = _make_author(is_self=True)
         bot = _make_author(bot=True)
         msg = _make_message(author=bot, mentions=[])
         self.assertFalse(self._run_filter(msg, "mentions", our_user))
 
-    def test_allow_bots_mentions_accepts_with_mention(self):
-        """With allow_bots=mentions, bot messages with @mention are accepted."""
+    def test_allow_bots_mentions_rejects_reply_ping_without_explicit_token(self):
+        """Implicit reply-pings in message.mentions must not count for bot routing."""
         our_user = _make_author(is_self=True)
         bot = _make_author(bot=True)
-        msg = _make_message(author=bot, mentions=[our_user])
+        msg = _make_message(author=bot, mentions=[our_user], content="👍")
+        self.assertFalse(self._run_filter(msg, "mentions", our_user))
+
+    def test_allow_bots_mentions_accepts_with_mention(self):
+        """With allow_bots=mentions, bot messages with explicit @mention are accepted."""
+        our_user = _make_author(is_self=True)
+        bot = _make_author(bot=True)
+        msg = _make_message(author=bot, mentions=[our_user], content=f"<@{our_user.id}> hello")
         self.assertTrue(self._run_filter(msg, "mentions", our_user))
 
+    @patch.dict(os.environ, {}, clear=True)
     def test_default_is_none(self):
         """Default behavior (no env var) should be 'none'."""
         default = os.getenv("DISCORD_ALLOW_BOTS", "none")

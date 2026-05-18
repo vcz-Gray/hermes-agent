@@ -396,6 +396,21 @@ def _make_discord_adapter_wired(runner=None):
     if runner is None:
         runner = make_runner(Platform.DISCORD)
 
+    for _var in (
+        "DISCORD_REQUIRE_MENTION",
+        "DISCORD_THREAD_REQUIRE_MENTION",
+        "DISCORD_FREE_RESPONSE_CHANNELS",
+        "DISCORD_AUTO_THREAD",
+        "DISCORD_NO_THREAD_CHANNELS",
+        "DISCORD_ALLOWED_CHANNELS",
+        "DISCORD_IGNORED_CHANNELS",
+        "DISCORD_HISTORY_BACKFILL",
+        "DISCORD_HISTORY_BACKFILL_LIMIT",
+        "DISCORD_ALLOW_BOTS",
+    ):
+        import os
+        os.environ.pop(_var, None)
+
     config = PlatformConfig(enabled=True, token="e2e-test-token")
     from gateway.platforms.helpers import ThreadParticipationTracker
     with patch.object(ThreadParticipationTracker, "_load", return_value=set()):
