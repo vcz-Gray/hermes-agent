@@ -8140,11 +8140,12 @@ def _cmd_update_impl(args, gateway_mode: bool):
         else:
             auto_stash_ref = _stash_local_changes_if_needed(git_cmd, PROJECT_ROOT)
 
-        prompt_for_restore = (
-            auto_stash_ref is not None
-            and not assume_yes
-            and (gateway_mode or (sys.stdin.isatty() and sys.stdout.isatty()))
-        )
+        # Autostashed local changes should come back automatically after the
+        # update, rebase-style. Asking every time creates churn for the common
+        # case and users can still recover from conflicts because
+        # _restore_stashed_changes preserves the stash + resets to clean state on
+        # failure.
+        prompt_for_restore = False
 
         # Check if there are updates
         result = subprocess.run(

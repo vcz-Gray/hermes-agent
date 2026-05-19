@@ -143,6 +143,56 @@ def test_restore_stashed_changes_applies_without_prompt_when_disabled(monkeypatc
     assert "Restore local changes now?" not in capsys.readouterr().out
 
 
+def test_cmd_update_auto_restores_stash_even_in_interactive_tty(monkeypatch, tmp_path):
+    _setup_update_mocks(monkeypatch, tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(hermes_main, "_is_termux_env", lambda env=None: False)
+    monkeypatch.setattr(hermes_main, "_load_installable_optional_extras", lambda group="all": [])
+
+    restore_calls = []
+
+    def fake_restore(git_cmd, cwd, stash_ref, prompt_user=False, input_fn=None):
+        restore_calls.append(
+            {
+                "git_cmd": git_cmd,
+                "cwd": cwd,
+                "stash_ref": stash_ref,
+                "prompt_user": prompt_user,
+                "input_fn": input_fn,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(hermes_main, "_stash_local_changes_if_needed", lambda *a, **kw: "abc123")
+    monkeypatch.setattr(hermes_main, "_restore_stashed_changes", fake_restore)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[:2] == ["git", "fetch"]:
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+        if cmd[:4] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return SimpleNamespace(stdout="main\n", stderr="", returncode=0)
+        if cmd[:2] == ["git", "rev-list"]:
+            return SimpleNamespace(stdout="1\n", stderr="", returncode=0)
+        if cmd[:3] == ["git", "pull", "--ff-only"]:
+            return SimpleNamespace(stdout="updated\n", stderr="", returncode=0)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(hermes_main.subprocess, "run", fake_run)
+
+    args = SimpleNamespace(yes=False, check=False, gateway=False)
+
+    import sys as _sys
+    from unittest.mock import patch as _patch
+
+    with _patch.object(_sys.stdin, "isatty", return_value=True), _patch.object(
+        _sys.stdout, "isatty", return_value=True
+    ), _patch("builtins.input", side_effect=AssertionError("stash restore should not prompt")):
+        hermes_main.cmd_update(args)
+
+    assert restore_calls, "expected autostash restore to run"
+    assert restore_calls[0]["prompt_user"] is False
+
+
 
 def test_print_stash_cleanup_guidance_with_selector(capsys):
     hermes_main._print_stash_cleanup_guidance("abc123", "stash@{2}")

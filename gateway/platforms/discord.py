@@ -4107,10 +4107,12 @@ class DiscordAdapter(BasePlatformAdapter):
         mention. In that flow there is no ``create_thread(name=...)`` call, so we
         opportunistically retitle the thread in-place before responding.
         """
+        channel = getattr(message, "channel", None)
+        if channel is None:
+            return
+
+        thread_id = str(getattr(channel, "id", "") or "").strip()
         try:
-            channel = getattr(message, "channel", None)
-            if channel is None:
-                return
             current_name = (getattr(channel, "name", None) or "").strip()
             content = (getattr(message, "content", None) or "").strip()
             derived_name = await self._generate_thread_title(content)
@@ -4120,10 +4122,12 @@ class DiscordAdapter(BasePlatformAdapter):
             if edit is None:
                 return
             await edit(name=derived_name, reason="Hermes normalized thread title from first message")
-            self._threads.mark(str(getattr(channel, "id", "")))
             logger.info("[%s] Retitled existing thread %s -> %s", self.name, current_name or "(untitled)", derived_name)
         except Exception as exc:
             logger.debug("[%s] Could not retitle existing thread before first response: %s", self.name, exc)
+        finally:
+            if thread_id:
+                self._threads.mark(thread_id)
 
     async def create_handoff_thread(
         self,
@@ -4745,7 +4749,7 @@ class DiscordAdapter(BasePlatformAdapter):
                     thread_id = str(thread.id)
                     auto_threaded_channel = thread
                     self._threads.mark(thread_id)
-        elif is_thread and thread_id and thread_id not in self._threads:
+        elif is_thread and thread_id and not getattr(message.author, "bot", False):
             await self._maybe_retitle_existing_thread(message)
 
         all_attachments = list(message.attachments) + snapshot_attachments
@@ -5008,12 +5012,12 @@ class DiscordAdapter(BasePlatformAdapter):
             channel_context=_channel_context,
         )
 
-        # Do NOT mark every explicitly mentioned thread reply as a durable
-        # no-mention thread.  That caused one-shot mid-thread mentions (e.g.
-        # temporarily calling in another bot) to permanently opt that bot into
-        # future unmentioned replies for the whole thread.  Durable thread
-        # participation is granted only at thread creation / explicit thread
-        # setup sites such as auto-threading and /thread.
+        # Human-triggered thread participation is durable: once Hermes engages in
+        # a thread, follow-up messages there should not require another @mention.
+        # Bot-authored messages are excluded so explicit bot-to-bot pings remain
+        # one-shot and don't create long-lived reply loops.
+        if thread_id and not getattr(message.author, "bot", False):
+            self._threads.mark(thread_id)
 
         # Only batch plain text messages — commands, media, etc. dispatch
         # immediately since they won't be split by the Discord client.

@@ -86,6 +86,7 @@ class FakeThread:
         self.parent_id = getattr(parent, "id", None)
         self.guild = getattr(parent, "guild", None) or SimpleNamespace(name=guild_name)
         self.topic = None
+        self.edit = AsyncMock()
 
     def history(self, *, limit, before, after=None, oldest_first=None):
         async def _iter():
@@ -481,8 +482,8 @@ async def test_discord_auto_thread_tracks_participation(adapter, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_discord_explicit_thread_dispatch_does_not_grant_durable_participation(adapter, monkeypatch):
-    """Processing a normal existing-thread message should not permanently skip future mention checks."""
+async def test_discord_thread_participation_tracked_on_dispatch(adapter, monkeypatch):
+    """When the bot processes a message in a thread, it tracks participation."""
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
     monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
 
@@ -491,12 +492,63 @@ async def test_discord_explicit_thread_dispatch_does_not_grant_durable_participa
 
     await adapter._handle_message(message)
 
-    assert "777" not in adapter._threads
+    assert "777" in adapter._threads
+
+
+@pytest.mark.asyncio
+async def test_existing_thread_is_retitled_before_first_response(adapter, monkeypatch):
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+
+    thread = FakeThread(channel_id=778, name="generic thread")
+    thread.edit = AsyncMock()
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 제목 정리")
+
+    message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
+    await adapter._handle_message(message)
+
+    thread.edit.assert_awaited_once_with(
+        name="🧵 제목 정리",
+        reason="Hermes normalized thread title from first message",
+    )
+    assert "778" in adapter._threads
+
+
+@pytest.mark.asyncio
+async def test_existing_thread_with_correct_title_skips_edit_but_marks_participation(adapter, monkeypatch):
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+
+    thread = FakeThread(channel_id=779, name="🧵 제목 정리")
+    thread.edit = AsyncMock()
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 제목 정리")
+
+    message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
+    await adapter._handle_message(message)
+
+    thread.edit.assert_not_awaited()
+    assert "779" in adapter._threads
+
+
+@pytest.mark.asyncio
+async def test_existing_thread_rename_failure_still_marks_participation(adapter, monkeypatch):
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+
+    thread = FakeThread(channel_id=780, name="generic thread")
+    thread.edit = AsyncMock(side_effect=RuntimeError("no perms"))
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 제목 정리")
+
+    message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
+    await adapter._handle_message(message)
+
+    thread.edit.assert_awaited_once()
+    assert "780" in adapter._threads
 
 
 @pytest.mark.asyncio
 async def test_discord_voice_linked_channel_skips_mention_requirement_and_auto_thread(adapter, monkeypatch):
-    """Active voice-linked text channels should behave like free-response channels."""
+
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
     monkeypatch.delenv("DISCORD_FREE_RESPONSE_CHANNELS", raising=False)
     monkeypatch.delenv("DISCORD_AUTO_THREAD", raising=False)

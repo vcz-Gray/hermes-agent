@@ -228,8 +228,8 @@ async def test_dms_unaffected_by_ignored_channels(adapter, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_explicit_thread_mention_is_one_shot(adapter, monkeypatch):
-    """An explicit @mention inside an existing thread should not grant future no-mention replies."""
+async def test_explicit_thread_mention_grants_durable_followups(adapter, monkeypatch):
+    """Once Hermes engages in a human-started thread, follow-ups stay mention-free."""
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
     monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
     monkeypatch.setenv("DISCORD_ALLOWED_CHANNELS", "*")
@@ -253,7 +253,7 @@ async def test_explicit_thread_mention_is_one_shot(adapter, monkeypatch):
     second_message = make_message(channel=thread, content="follow-up without mention")
     await adapter._handle_message(second_message)
 
-    adapter.handle_message.assert_not_awaited()
+    adapter.handle_message.assert_awaited_once()
 
 
 # ── no_thread_channels ───────────────────────────────────────────────
