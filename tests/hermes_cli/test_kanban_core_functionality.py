@@ -3283,6 +3283,68 @@ def test_legacy_migration_no_legacy_columns_at_all(tmp_path):
     conn.close()
 
 
+def test_connect_legacy_db_without_session_id_does_not_crash_on_schema_index(tmp_path):
+    """Opening a legacy DB without tasks.session_id should migrate before indexing."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy-no-session-id.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            body TEXT,
+            assignee TEXT,
+            status TEXT NOT NULL,
+            priority INTEGER DEFAULT 0,
+            created_by TEXT,
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            completed_at INTEGER,
+            workspace_kind TEXT NOT NULL DEFAULT 'scratch',
+            workspace_path TEXT,
+            claim_lock TEXT,
+            claim_expires INTEGER,
+            tenant TEXT,
+            result TEXT,
+            idempotency_key TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            worker_pid INTEGER,
+            last_failure_error TEXT,
+            max_runtime_seconds INTEGER,
+            last_heartbeat_at INTEGER,
+            current_run_id INTEGER,
+            workflow_template_id TEXT,
+            current_step_key TEXT,
+            skills TEXT,
+            model_override TEXT,
+            max_retries INTEGER
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE task_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload TEXT,
+            created_at INTEGER NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with kb.connect(db_path) as migrated:
+        cols = {r[1] for r in migrated.execute("PRAGMA table_info(tasks)")}
+        assert "session_id" in cols
+        indexes = [r[1] for r in migrated.execute("PRAGMA index_list(tasks)")]
+        assert "idx_tasks_session_id" in indexes
+
+
 def test_legacy_migration_both_columns_already_present(tmp_path):
     """Scenario D: DB already has both spawn_failures AND consecutive_failures.
 

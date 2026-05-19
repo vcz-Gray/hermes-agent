@@ -865,8 +865,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     session_id           TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
-
 CREATE TABLE IF NOT EXISTS task_links (
     parent_id  TEXT NOT NULL,
     child_id   TEXT NOT NULL,
@@ -934,7 +932,9 @@ CREATE TABLE IF NOT EXISTS kanban_notify_subs (
     last_event_id INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (task_id, platform, chat_id, thread_id)
 );
+"""
 
+SCHEMA_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_tenant          ON tasks(tenant);
@@ -1011,6 +1011,7 @@ def connect(
                 # stale PRAGMA snapshots during gateway startup.
                 conn.executescript(SCHEMA_SQL)
                 _migrate_add_optional_columns(conn)
+                conn.executescript(SCHEMA_INDEX_SQL)
                 _INITIALIZED_PATHS.add(resolved)
     except Exception:
         conn.close()
@@ -1174,10 +1175,10 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(
             conn, "tasks", "session_id", "session_id TEXT"
         )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_tasks_session_id "
-            "ON tasks(session_id)"
-        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_session_id "
+        "ON tasks(session_id)"
+    )
 
     # task_events gained a run_id column; back-fill it as NULL for
     # historical events (they predate runs and can't be attributed).
