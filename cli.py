@@ -8000,6 +8000,11 @@ class HermesCLI:
             self._handle_copy_command(cmd_original)
         elif canonical == "debug":
             self._handle_debug_command()
+        elif canonical == "sync":
+            from hermes_cli.sync_cmd import cmd_sync
+
+            with self._busy_command(self._slow_command_status(cmd_original)):
+                cmd_sync(None)
         elif canonical == "update":
             if self._handle_update_command():
                 return False

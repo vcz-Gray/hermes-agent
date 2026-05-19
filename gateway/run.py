@@ -7193,6 +7193,9 @@ class GatewayRunner:
         if canonical == "platform":
             return await self._handle_platform_command(event)
 
+        if canonical == "sync":
+            return await self._handle_sync_command(event)
+
         if canonical == "restart":
             return await self._handle_restart_command(event)
         
@@ -13542,6 +13545,50 @@ class GatewayRunner:
             return "\n".join(lines)
 
         return await loop.run_in_executor(None, _collect_and_upload)
+
+    async def _handle_sync_command(self, event: MessageEvent) -> str:
+        """Handle /sync command — run ``hermes sync`` and return its output."""
+        import asyncio
+        import subprocess
+        from hermes_cli.config import is_managed, format_managed_message
+
+        platform = event.source.platform
+        _allowed = self._UPDATE_ALLOWED_PLATFORMS
+        if platform not in _allowed:
+            try:
+                from gateway.platform_registry import platform_registry
+                entry = platform_registry.get(platform.value)
+                if not entry or not entry.allow_update_command:
+                    return t("gateway.update.platform_not_messaging")
+            except Exception:
+                return t("gateway.update.platform_not_messaging")
+
+        if is_managed():
+            return f"✗ {format_managed_message('sync Hermes Agent')}"
+
+        project_root = Path(__file__).parent.parent.resolve()
+        git_dir = project_root / '.git'
+        if not git_dir.exists():
+            return t("gateway.update.not_git_repo")
+
+        hermes_cmd = _resolve_hermes_bin()
+        if not hermes_cmd:
+            return t("gateway.update.hermes_cmd_not_found")
+
+        loop = asyncio.get_running_loop()
+
+        def _run_sync() -> str:
+            proc = subprocess.run(
+                [*hermes_cmd, "sync"],
+                cwd=project_root,
+                text=True,
+                capture_output=True,
+            )
+            stdout = (proc.stdout or "").strip()
+            stderr = (proc.stderr or "").strip()
+            return stdout or stderr or f"hermes sync exited with code {proc.returncode}"
+
+        return await loop.run_in_executor(None, _run_sync)
 
     async def _handle_update_command(self, event: MessageEvent) -> str:
         """Handle /update command — update Hermes Agent to the latest version.

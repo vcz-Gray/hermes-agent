@@ -35,6 +35,7 @@ Usage:
     hermes honcho identity <file>          # Seed AI peer identity from a file (SOUL.md etc.)
     hermes honcho migrate                  # Step-by-step migration guide: OpenClaw native → Hermes + Honcho
     hermes version             Show version
+    hermes sync                Sync current fork branch from upstream
     hermes update              Update to latest version
     hermes uninstall           Uninstall Hermes Agent
     hermes acp                 Run as an ACP server for editor integration
@@ -12312,6 +12313,18 @@ Examples:
     # =========================================================================
     version_parser = subparsers.add_parser("version", help="Show version information")
     version_parser.set_defaults(func=cmd_version)
+
+    # =========================================================================
+    # sync command
+    # =========================================================================
+    from hermes_cli.sync_cmd import cmd_sync
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Sync the current Hermes fork branch from upstream",
+        description="Fetch upstream, rebase the current branch, and push it to origin.",
+    )
+    sync_parser.set_defaults(func=cmd_sync)
 
     # =========================================================================
     # update command

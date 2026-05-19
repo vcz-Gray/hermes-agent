@@ -73,9 +73,19 @@ hermes config set   # Set individual config values
 hermes gateway      # Start the messaging gateway (Telegram, Discord, etc.)
 hermes setup        # Run the full setup wizard (configures everything at once)
 hermes claw migrate # Migrate from OpenClaw (if coming from OpenClaw)
+hermes sync         # Sync your Hermes fork branch from upstream
 hermes update       # Update to the latest version
 hermes doctor       # Diagnose any issues
 ```
+
+If you maintain Hermes from a personal fork, the recommended workflow is:
+
+```bash
+hermes sync
+hermes update
+```
+
+`hermes sync` rebases your current Hermes branch onto `upstream` and pushes it to `origin`; `hermes update` then refreshes your local install from that already-synced branch.
 
 📖 **[Full documentation →](https://hermes-agent.nousresearch.com/docs/)**
 

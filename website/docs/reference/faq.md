@@ -632,6 +632,8 @@ No. Each profile has its own memory store, session database, and skills director
 
 `hermes update` pulls the latest code and reinstalls dependencies **once** (not per-profile). It then syncs updated skills to all profiles automatically. You only need to run `hermes update` once — it covers every profile on the machine.
 
+If you maintain Hermes from a personal fork, run `hermes sync` first, then `hermes update`. `hermes sync` is the fork-management step; `hermes update` stays a pure local updater.
+
 
 ### How many profiles can I run?
 
