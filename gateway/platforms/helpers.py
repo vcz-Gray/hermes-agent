@@ -262,6 +262,64 @@ class ThreadParticipationTracker:
         self._threads.clear()
 
 
+class ThreadValueTracker:
+    """Persistent key-value storage for per-thread platform state."""
+
+    def __init__(self, platform_name: str, value_name: str):
+        self._platform = platform_name
+        self._value_name = value_name
+        self._values: Dict[str, str] = self._load()
+
+    def _state_path(self) -> Path:
+        from hermes_constants import get_hermes_home
+        return get_hermes_home() / f"{self._platform}_{self._value_name}.json"
+
+    def _load(self) -> Dict[str, str]:
+        path = self._state_path()
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return {
+                        str(thread_id): str(value)
+                        for thread_id, value in data.items()
+                        if str(thread_id).strip() and str(value).strip()
+                    }
+            except Exception:
+                pass
+        return {}
+
+    def _save(self) -> None:
+        atomic_json_write(self._state_path(), self._values, indent=2)
+
+    def get(self, thread_id: str) -> str:
+        return self._values.get(str(thread_id), "")
+
+    def set(self, thread_id: str, value: str) -> None:
+        key = str(thread_id).strip()
+        if not key:
+            return
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            self.clear(key)
+            return
+        self._values[key] = cleaned
+        self._save()
+
+    def clear(self, thread_id: str) -> None:
+        key = str(thread_id).strip()
+        if key in self._values:
+            self._values.pop(key, None)
+            self._save()
+
+    def __contains__(self, thread_id: str) -> bool:
+        return str(thread_id) in self._values
+
+    def clear_all(self) -> None:
+        self._values.clear()
+        self._save()
+
+
 # ─── Phone Number Redaction ──────────────────────────────────────────────────
 
 

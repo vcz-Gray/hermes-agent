@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 import sys
+import time
 
 import pytest
 
@@ -544,6 +545,26 @@ async def test_existing_thread_rename_failure_still_marks_participation(adapter,
 
     thread.edit.assert_awaited_once()
     assert "780" in adapter._threads
+
+
+@pytest.mark.asyncio
+async def test_existing_thread_recent_retitle_skips_followup_rename(adapter, monkeypatch):
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+    monkeypatch.setenv("DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS", "21600")
+
+    thread = FakeThread(channel_id=781, name="🧵 제목 정리")
+    thread.edit = AsyncMock()
+    adapter._threads.mark("781")
+    adapter._thread_retitle_timestamps.set("781", str(time.time()))
+    adapter._generate_thread_title = AsyncMock(return_value="🧭 새 제목")
+
+    message = make_message(channel=thread, content="후속 메시지")
+    await adapter._handle_message(message)
+
+    adapter._generate_thread_title.assert_not_awaited()
+    thread.edit.assert_not_awaited()
+    assert "781" in adapter._threads
 
 
 @pytest.mark.asyncio

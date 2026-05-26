@@ -407,13 +407,17 @@ def _make_discord_adapter_wired(runner=None):
         "DISCORD_HISTORY_BACKFILL",
         "DISCORD_HISTORY_BACKFILL_LIMIT",
         "DISCORD_ALLOW_BOTS",
+        "DISCORD_THREAD_TITLE_PREFIX",
     ):
         import os
         os.environ.pop(_var, None)
 
     config = PlatformConfig(enabled=True, token="e2e-test-token")
-    from gateway.platforms.helpers import ThreadParticipationTracker
-    with patch.object(ThreadParticipationTracker, "_load", return_value=set()):
+    from gateway.platforms.helpers import ThreadParticipationTracker, ThreadValueTracker
+    with patch.object(ThreadParticipationTracker, "_load", return_value=set()), \
+         patch.object(ThreadParticipationTracker, "_save", return_value=None), \
+         patch.object(ThreadValueTracker, "_load", return_value={}), \
+         patch.object(ThreadValueTracker, "_save", return_value=None):
         adapter = DiscordAdapter(config)
 
     bot_user = make_fake_bot_user()

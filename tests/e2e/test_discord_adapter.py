@@ -10,7 +10,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gateway.platforms.discord import _derive_auto_thread_title, discord
+from plugins.platforms.discord.adapter import (
+    _apply_discord_thread_title_prefix,
+    _derive_auto_thread_title,
+    _extract_bracketed_discord_thread_title_prefix,
+    _normalize_discord_thread_title_prefix,
+    _strip_leading_bracketed_discord_thread_title_prefix,
+    discord,
+)
 from tests.e2e.conftest import (
     BOT_USER_ID,
     E2E_MESSAGE_SETTLE_DELAY,
@@ -98,6 +105,23 @@ class TestAutoThreadTitleCleanup:
     def test_strips_request_ending_for_bug_report_style_titles(self):
         title = _derive_auto_thread_title("여기서 로그인 버그 봐줘")
         assert title == "🐛 로그인 버그"
+
+
+class TestThreadTitlePrefixHelpers:
+    def test_normalizes_bare_or_bracketed_project_prefix(self):
+        assert _normalize_discord_thread_title_prefix("프로젝트A") == "[프로젝트A]"
+        assert _normalize_discord_thread_title_prefix(" [프로젝트A] ") == "[프로젝트A]"
+
+    def test_extracts_bracketed_prefix_from_existing_title_or_message(self):
+        assert _extract_bracketed_discord_thread_title_prefix("[프로젝트A] 🐛 로그인 버그") == "[프로젝트A]"
+        assert _extract_bracketed_discord_thread_title_prefix("", "[프로젝트B] 배포 체크 부탁해") == "[프로젝트B]"
+
+    def test_strips_leading_bracketed_prefix_before_generating_suffix(self):
+        assert _strip_leading_bracketed_discord_thread_title_prefix("[프로젝트A] 로그인 버그 봐줘") == "로그인 버그 봐줘"
+
+    def test_applies_project_prefix_without_duplication(self):
+        assert _apply_discord_thread_title_prefix("🐛 로그인 버그", "프로젝트A") == "[프로젝트A] 🐛 로그인 버그"
+        assert _apply_discord_thread_title_prefix("[프로젝트A] 🐛 로그인 버그", "[프로젝트A]") == "[프로젝트A] 🐛 로그인 버그"
 
 
 class TestAutoThreadingPreservesCommand:
@@ -195,3 +219,93 @@ class TestExistingThreadRetitle:
             reason="Hermes normalized thread title from first message",
         )
         assert str(thread.id) in discord_adapter._threads
+
+    async def test_followup_message_in_existing_thread_does_not_retitle_again(self, discord_adapter, bot_user, monkeypatch):
+        monkeypatch.setenv("DISCORD_AUTO_THREAD", "true")
+        thread = make_fake_thread(thread_id=90014, name="🧵 제목 정리")
+        thread.edit = AsyncMock()
+        discord_adapter._threads.mark(str(thread.id))
+
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> 후속 질문이야",
+            channel=thread,
+            mentions=[bot_user],
+        )
+        discord_adapter._generate_thread_title = AsyncMock(return_value="🧵 다른 제목")
+
+        await dispatch(discord_adapter, msg)
+
+        thread.edit.assert_not_awaited()
+        discord_adapter._generate_thread_title.assert_not_awaited()
+
+
+class TestProjectCommand:
+    async def test_sets_thread_local_project_prefix_and_retitles_thread(self, discord_adapter, bot_user):
+        thread = make_fake_thread(thread_id=90005, name="🐛 로그인 버그")
+        thread.edit = AsyncMock()
+        discord_adapter._threads.mark(str(thread.id))
+
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> /project 프로젝트A",
+            channel=thread,
+            mentions=[bot_user],
+        )
+
+        await dispatch(discord_adapter, msg)
+
+        thread.edit.assert_awaited_once_with(
+            name="[프로젝트A] 🐛 로그인 버그",
+            reason="Hermes set thread-local project prefix",
+        )
+        assert get_response_text(discord_adapter) == "thread project prefix 설정됨 → [프로젝트A]"
+
+    async def test_shows_current_thread_local_project_prefix(self, discord_adapter, bot_user):
+        thread = make_fake_thread(thread_id=90006, name="[프로젝트A] 🐛 로그인 버그")
+        discord_adapter._threads.mark(str(thread.id))
+        discord_adapter._thread_title_prefixes.set(str(thread.id), "[프로젝트A]")
+
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> /project",
+            channel=thread,
+            mentions=[bot_user],
+        )
+
+        await dispatch(discord_adapter, msg)
+
+        assert get_response_text(discord_adapter) == "현재 thread project prefix: [프로젝트A]"
+
+    async def test_clears_thread_local_project_prefix_and_keeps_suffix(self, discord_adapter, bot_user):
+        thread = make_fake_thread(thread_id=90007, name="[프로젝트A] 🐛 로그인 버그")
+        thread.edit = AsyncMock()
+        discord_adapter._threads.mark(str(thread.id))
+        discord_adapter._thread_title_prefixes.set(str(thread.id), "[프로젝트A]")
+
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> /project off",
+            channel=thread,
+            mentions=[bot_user],
+        )
+
+        await dispatch(discord_adapter, msg)
+
+        thread.edit.assert_awaited_once_with(
+            name="🐛 로그인 버그",
+            reason="Hermes cleared thread-local project prefix",
+        )
+        assert get_response_text(discord_adapter) == "thread project prefix 해제됨 → 🐛 로그인 버그"
+
+    async def test_opening_message_prefix_is_used_for_new_auto_thread(self, discord_adapter, bot_user, monkeypatch):
+        monkeypatch.setenv("DISCORD_AUTO_THREAD", "true")
+        fake_thread = make_fake_thread(thread_id=90008, name="[프로젝트B] 🚀 배포 체크")
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> [프로젝트B] 배포 체크 부탁해",
+            mentions=[bot_user],
+        )
+        msg.create_thread = AsyncMock(return_value=fake_thread)
+
+        await dispatch(discord_adapter, msg)
+
+        msg.create_thread.assert_awaited_once_with(
+            name="[프로젝트B] 🚀 배포 체크",
+            auto_archive_duration=1440,
+        )

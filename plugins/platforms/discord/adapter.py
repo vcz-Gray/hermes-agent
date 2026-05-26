@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional, Any, Tuple
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ _DISCORD_COMMAND_SYNC_STATE_SUBDIR = "gateway"
 _DISCORD_COMMAND_SYNC_STATE_FILENAME = "discord_command_sync_state.json"
 _DISCORD_COMMAND_SYNC_MUTATION_INTERVAL_SECONDS = 4.5
 _DISCORD_COMMAND_SYNC_MAX_RATE_LIMIT_SLEEP_SECONDS = 30.0
+_DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS = 21600.0
 
 try:
     import discord
@@ -50,7 +52,7 @@ sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 from gateway.config import Platform, PlatformConfig
 import re
 
-from gateway.platforms.helpers import MessageDeduplicator, ThreadParticipationTracker
+from gateway.platforms.helpers import MessageDeduplicator, ThreadParticipationTracker, ThreadValueTracker
 from utils import atomic_json_write
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -100,6 +102,84 @@ def _has_explicit_discord_user_mention(content: str, user_id: int | str | None) 
         return False
     body = content or ""
     return f"<@{uid}>" in body or f"<@!{uid}>" in body
+
+
+def _normalize_discord_thread_title_prefix(raw_prefix: str) -> str:
+    """Return a canonical ``[Project]``-style prefix or an empty string."""
+    prefix = " ".join(str(raw_prefix or "").split()).strip()
+    if not prefix:
+        return ""
+    prefix = prefix.strip("[] ")
+    if not prefix:
+        return ""
+    return f"[{prefix}]"
+
+
+def _extract_bracketed_discord_thread_title_prefix(*candidates: str) -> str:
+    """Return the first leading ``[Project]`` prefix found in the candidates."""
+    for candidate in candidates:
+        text = " ".join(str(candidate or "").split()).strip()
+        if not text:
+            continue
+        match = re.match(r"^\[(?P<prefix>[^\[\]]{1,60})\]", text)
+        if match:
+            return _normalize_discord_thread_title_prefix(match.group("prefix"))
+    return ""
+
+
+def _strip_leading_bracketed_discord_thread_title_prefix(text: str) -> str:
+    """Remove a leading ``[Project]`` prefix from raw title-generation input."""
+    cleaned = " ".join(str(text or "").split()).strip()
+    if not cleaned:
+        return cleaned
+    cleaned = re.sub(r"^\[[^\[\]]{1,60}\]\s*", "", cleaned, count=1)
+    return cleaned.strip()
+
+
+def _apply_discord_thread_title_prefix(title: str, raw_prefix: str) -> str:
+    """Prepend the configured project prefix while preserving the dynamic suffix."""
+    cleaned = " ".join(str(title or "").split()).strip()
+    if not cleaned:
+        return cleaned
+    prefix = _normalize_discord_thread_title_prefix(raw_prefix)
+    if not prefix:
+        return cleaned
+    if cleaned == prefix or cleaned.startswith(f"{prefix} "):
+        final_title = cleaned
+    else:
+        final_title = f"{prefix} {cleaned}"
+    if len(final_title) > 100:
+        final_title = final_title[:99].rstrip() + "…"
+    return final_title
+
+
+def _looks_like_generic_existing_thread_title(raw_title: str) -> bool:
+    """Heuristic: return True when an existing thread title is still generic.
+
+    We want one opportunistic normalization pass for stale/default thread names,
+    but should leave already-meaningful titles alone on follow-up messages.
+    """
+    title = " ".join(str(raw_title or "").split()).strip().lower()
+    if not title:
+        return True
+    generic_titles = {
+        "thread",
+        "new thread",
+        "generic thread",
+        "long generic thread",
+        "untitled",
+        "untitled thread",
+        "새 스레드",
+        "새 쓰레드",
+        "일반 스레드",
+        "일반 쓰레드",
+        "제목 없음",
+    }
+    if title in generic_titles:
+        return True
+    if re.fullmatch(r"(?:thread|스레드|쓰레드)[ -]?\d+", title):
+        return True
+    return False
 
 
 def _derive_auto_thread_title(raw_content: str) -> str:
@@ -716,6 +796,16 @@ class DiscordAdapter(BasePlatformAdapter):
         # in those threads don't require @mention.  Persisted to disk so the
         # set survives gateway restarts.
         self._threads = ThreadParticipationTracker("discord")
+        # Per-thread project/title prefixes set manually via /project.
+        self._thread_title_prefixes = ThreadValueTracker(
+            "discord", "thread_title_prefixes"
+        )
+        # Persistent backoff for in-place retitles of already-existing Discord
+        # threads. Without this, a long conversation can trigger repeated
+        # PATCH /channels/<thread_id> renames and hit Discord 429s.
+        self._thread_retitle_timestamps = ThreadValueTracker(
+            "discord", "thread_retitle_timestamps"
+        )
         # Persistent typing indicator loops per channel (DMs don't reliably
         # show the standard typing gateway event for bots)
         self._typing_tasks: Dict[str, asyncio.Task] = {}
@@ -3133,6 +3223,30 @@ class DiscordAdapter(BasePlatformAdapter):
         async def slash_title(interaction: discord.Interaction, name: str = ""):
             await self._run_simple_slash(interaction, f"/title {name}".strip())
 
+        @tree.command(
+            name="project",
+            description="Set or show the thread-local project prefix",
+        )
+        @discord.app_commands.describe(
+            name="Project label for this thread. Leave empty to show current, or use 'off' to clear."
+        )
+        async def slash_project(interaction: discord.Interaction, name: str = ""):
+            if not await self._check_slash_authorization(
+                interaction, f"/project {name}".strip() or "/project"
+            ):
+                return
+            await interaction.response.defer(ephemeral=True)
+            channel = getattr(interaction, "channel", None)
+            if channel is None or not isinstance(channel, discord.Thread):
+                await interaction.edit_original_response(
+                    content="`/project`는 Discord thread 안에서만 사용할 수 있어요."
+                )
+                return
+            command_text = f"/project {name}".strip()
+            fake_message = SimpleNamespace(content=command_text, channel=channel)
+            await self._handle_project_command(fake_message, str(channel.id))
+            await interaction.edit_original_response(content="thread-local project prefix 처리 완료")
+
         @tree.command(name="resume", description="Resume a previously-named session")
         @discord.app_commands.describe(name="Session name to resume. Leave empty to list sessions.")
         async def slash_resume(interaction: discord.Interaction, name: str = ""):
@@ -3825,6 +3939,43 @@ class DiscordAdapter(BasePlatformAdapter):
             return bool(configured)
         return os.getenv("DISCORD_THREAD_REQUIRE_MENTION", "false").lower() in {"true", "1", "yes", "on"}
 
+    def _discord_existing_thread_retitle_cooldown_seconds(self) -> float:
+        """Return the cooldown between automatic existing-thread retitles.
+
+        Existing Discord threads should usually be normalized once near the
+        start of the conversation, not renamed on every follow-up message.
+        A per-thread cooldown keeps titles stable and dramatically reduces the
+        chance of hitting Discord's channel-edit rate limits.
+        """
+        configured = self.config.extra.get("existing_thread_retitle_cooldown_seconds")
+        raw = configured if configured is not None else os.getenv(
+            "DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS",
+            str(_DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS),
+        )
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return _DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS
+
+    def _mark_existing_thread_retitle_attempt(self, thread_id: str) -> None:
+        if thread_id:
+            self._thread_retitle_timestamps.set(thread_id, f"{time.time():.6f}")
+
+    def _existing_thread_retitle_is_in_cooldown(self, thread_id: str) -> bool:
+        if not thread_id:
+            return False
+        cooldown = self._discord_existing_thread_retitle_cooldown_seconds()
+        if cooldown <= 0:
+            return False
+        raw_value = self._thread_retitle_timestamps.get(thread_id)
+        if not raw_value:
+            return False
+        try:
+            last_attempt = float(raw_value)
+        except (TypeError, ValueError):
+            return False
+        return (time.time() - last_attempt) < cooldown
+
     def _discord_history_backfill(self) -> bool:
         """Return whether history backfill is enabled for shared sessions."""
         configured = self.config.extra.get("history_backfill")
@@ -4119,24 +4270,95 @@ class DiscordAdapter(BasePlatformAdapter):
                 )
                 return None
 
-    async def _generate_thread_title(self, raw_content: str) -> str:
+    def _get_thread_title_prefix(self, raw_content: str = "", current_thread_name: str = "", thread_id: str = "") -> str:
+        """Resolve a fixed project prefix for this Discord thread title.
+
+        Priority:
+        1. Manual thread-local override from /project
+        2. Existing thread name prefix (keeps per-thread project identity stable)
+        3. Leading bracketed prefix in the user's opening message
+        4. Optional env/config fallback
+        """
+        manual_prefix = self._thread_title_prefixes.get(thread_id) if thread_id else ""
+        if manual_prefix:
+            return manual_prefix
+        existing_prefix = _extract_bracketed_discord_thread_title_prefix(current_thread_name, raw_content)
+        if existing_prefix:
+            return existing_prefix
+        return str(os.getenv("DISCORD_THREAD_TITLE_PREFIX", "") or "")
+
+    def _current_thread_project_prefix(self, thread_id: str, current_thread_name: str = "") -> str:
+        """Return the current effective project prefix for an existing thread."""
+        return self._get_thread_title_prefix("", current_thread_name, thread_id)
+
+    def _retitle_with_project_prefix(self, current_title: str, raw_prefix: str) -> str:
+        """Apply or remove the leading project prefix while keeping the suffix."""
+        suffix = _strip_leading_bracketed_discord_thread_title_prefix(current_title)
+        suffix = " ".join(str(suffix or "").split()).strip()
+        if not raw_prefix:
+            return suffix or "🧵 Hermes"
+        if not suffix:
+            suffix = "🧵 Hermes"
+        return _apply_discord_thread_title_prefix(suffix, raw_prefix)
+
+    async def _handle_project_command(self, message: DiscordMessage, thread_id: str) -> bool:
+        """Handle Discord thread-local /project commands. Returns True if consumed."""
+        content = " ".join((getattr(message, "content", "") or "").split()).strip()
+        if not content.lower().startswith("/project"):
+            return False
+
+        current_name = (getattr(message.channel, "name", None) or "").strip()
+        args = content[len("/project"):].strip()
+        if not args:
+            current_prefix = self._current_thread_project_prefix(thread_id, current_name)
+            body = current_prefix or "(unset)"
+            await self.send(str(message.channel.id), f"현재 thread project prefix: {body}")
+            return True
+
+        if args.lower() in {"off", "clear", "none", "unset", "remove"}:
+            self._thread_title_prefixes.clear(thread_id)
+            new_name = self._retitle_with_project_prefix(current_name, "")
+            edit = getattr(message.channel, "edit", None)
+            if edit is not None and new_name != current_name:
+                await edit(name=new_name, reason="Hermes cleared thread-local project prefix")
+            self._mark_existing_thread_retitle_attempt(thread_id)
+            await self.send(str(message.channel.id), f"thread project prefix 해제됨 → {new_name}")
+            return True
+
+        normalized_prefix = _normalize_discord_thread_title_prefix(args)
+        if not normalized_prefix:
+            await self.send(str(message.channel.id), "project prefix가 비어 있어 설정하지 않았어요.")
+            return True
+
+        self._thread_title_prefixes.set(thread_id, normalized_prefix)
+        new_name = self._retitle_with_project_prefix(current_name, normalized_prefix)
+        edit = getattr(message.channel, "edit", None)
+        if edit is not None and new_name != current_name:
+            await edit(name=new_name, reason="Hermes set thread-local project prefix")
+        self._mark_existing_thread_retitle_attempt(thread_id)
+        await self.send(str(message.channel.id), f"thread project prefix 설정됨 → {normalized_prefix}")
+        return True
+
+    async def _generate_thread_title(self, raw_content: str, current_thread_name: str = "", thread_id: str = "") -> str:
         """Generate a Discord thread title via Hermes's internal LLM path.
 
         Falls back to the local heuristic if auxiliary/main-model title
         generation fails for any reason.
         """
         content = (raw_content or "").strip()
-        if not content:
-            return _derive_auto_thread_title(content)
+        configured_prefix = self._get_thread_title_prefix(content, current_thread_name, thread_id)
+        content_for_generation = _strip_leading_bracketed_discord_thread_title_prefix(content)
+        if not content_for_generation:
+            return _apply_discord_thread_title_prefix(_derive_auto_thread_title(content_for_generation), configured_prefix)
         try:
             from agent.title_generator import generate_discord_thread_title
-            title = await asyncio.to_thread(generate_discord_thread_title, content)
+            title = await asyncio.to_thread(generate_discord_thread_title, content_for_generation)
             cleaned = " ".join(str(title or "").split()).strip()
             if cleaned:
-                return cleaned
+                return _apply_discord_thread_title_prefix(cleaned, configured_prefix)
         except Exception as exc:
             logger.debug("[%s] LLM thread-title generation crashed; falling back: %s", self.name, exc)
-        return _derive_auto_thread_title(content)
+        return _apply_discord_thread_title_prefix(_derive_auto_thread_title(content_for_generation), configured_prefix)
 
     async def _maybe_retitle_existing_thread(self, message: 'DiscordMessage') -> None:
         """Rename the current Discord thread before the first Hermes response.
@@ -4153,16 +4375,26 @@ class DiscordAdapter(BasePlatformAdapter):
         thread_id = str(getattr(channel, "id", "") or "").strip()
         try:
             current_name = (getattr(channel, "name", None) or "").strip()
+            if thread_id in self._threads:
+                if self._existing_thread_retitle_is_in_cooldown(thread_id):
+                    return
+                if current_name and not _looks_like_generic_existing_thread_title(current_name):
+                    self._mark_existing_thread_retitle_attempt(thread_id)
+                    return
             content = (getattr(message, "content", None) or "").strip()
-            derived_name = await self._generate_thread_title(content)
+            derived_name = await self._generate_thread_title(content, current_name, thread_id)
             if not derived_name or derived_name == current_name:
+                self._mark_existing_thread_retitle_attempt(thread_id)
                 return
             edit = getattr(channel, "edit", None)
             if edit is None:
+                self._mark_existing_thread_retitle_attempt(thread_id)
                 return
             await edit(name=derived_name, reason="Hermes normalized thread title from first message")
+            self._mark_existing_thread_retitle_attempt(thread_id)
             logger.info("[%s] Retitled existing thread %s -> %s", self.name, current_name or "(untitled)", derived_name)
         except Exception as exc:
+            self._mark_existing_thread_retitle_attempt(thread_id)
             logger.debug("[%s] Could not retitle existing thread before first response: %s", self.name, exc)
         finally:
             if thread_id:
@@ -4775,6 +5007,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # thread off that referenced/original message instead of the mention.
         # no_thread_channels: channels where bot responds directly without thread.
         auto_threaded_channel = None
+        is_project_command = normalized_content.startswith("/project")
         if not is_thread and not isinstance(message.channel, discord.DMChannel):
             no_thread_channels_raw = os.getenv("DISCORD_NO_THREAD_CHANNELS", "")
             no_thread_channels = {ch.strip() for ch in no_thread_channels_raw.split(",") if ch.strip()}
@@ -4789,7 +5022,16 @@ class DiscordAdapter(BasePlatformAdapter):
                     auto_threaded_channel = thread
                     self._threads.mark(thread_id)
         elif is_thread and thread_id and not getattr(message.author, "bot", False):
-            await self._maybe_retitle_existing_thread(message)
+            if not is_project_command:
+                await self._maybe_retitle_existing_thread(message)
+
+        if normalized_content.startswith("/project"):
+            if is_thread and thread_id:
+                if await self._handle_project_command(message, thread_id):
+                    return
+            else:
+                await self.send(str(message.channel.id), "`/project`는 Discord thread 안에서만 사용할 수 있어요.")
+                return
 
         all_attachments = list(message.attachments) + snapshot_attachments
 
