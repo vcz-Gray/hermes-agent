@@ -2792,6 +2792,17 @@ def systemd_status(deep: bool = False, system: bool = False, full: bool = False)
 # Launchd (macOS)
 # =============================================================================
 
+# macOS launchd services often inherit a much lower soft maxfiles limit than an
+# interactive shell. Hermes gateways are long-lived and may multiplex Discord,
+# cron, MCP, kanban dispatch, SQLite, and tool subprocesses in one process, so
+# the default soft limit (commonly 256) is too small and can surface as
+# ``OSError: [Errno 24] Too many open files`` plus downstream SQLite/network
+# failures. Set an explicit higher launchd limit in the generated plist so
+# `hermes gateway start/restart` preserves the fix instead of clobbering a
+# manual plist edit.
+_LAUNCHD_GATEWAY_MAXFILES_SOFT = 65536
+_LAUNCHD_GATEWAY_MAXFILES_HARD = 65536
+
 def get_launchd_label() -> str:
     """Return the launchd service label, scoped per profile."""
     suffix = _profile_suffix()
@@ -2877,6 +2888,18 @@ def generate_launchd_plist() -> str:
     <dict>
         <key>SuccessfulExit</key>
         <false/>
+    </dict>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>{_LAUNCHD_GATEWAY_MAXFILES_SOFT}</integer>
+    </dict>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>{_LAUNCHD_GATEWAY_MAXFILES_HARD}</integer>
     </dict>
     
     <key>StandardOutPath</key>

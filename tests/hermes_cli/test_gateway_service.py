@@ -1631,6 +1631,21 @@ class TestProfileArg:
         assert "<string>--profile</string>" in plist
         assert "<string>mybot</string>" in plist
 
+    def test_launchd_plist_contains_maxfiles_resource_limits(self):
+        plist = gateway_cli.generate_launchd_plist()
+
+        assert "<key>SoftResourceLimits</key>" in plist
+        assert "<key>HardResourceLimits</key>" in plist
+        assert "<key>NumberOfFiles</key>" in plist
+        assert (
+            f"<integer>{gateway_cli._LAUNCHD_GATEWAY_MAXFILES_SOFT}</integer>"
+            in plist
+        )
+        assert (
+            f"<integer>{gateway_cli._LAUNCHD_GATEWAY_MAXFILES_HARD}</integer>"
+            in plist
+        )
+
     def test_launchd_plist_path_uses_real_user_home_not_profile_home(self, tmp_path, monkeypatch):
         profile_dir = tmp_path / ".hermes" / "profiles" / "orcha"
         profile_dir.mkdir(parents=True)
