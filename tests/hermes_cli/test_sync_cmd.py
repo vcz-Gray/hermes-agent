@@ -31,7 +31,7 @@ def test_cmd_sync_happy_path(monkeypatch, capsys):
             return _cp(cmd, stdout="refs/remotes/upstream/main\n")
         if cmd[:3] == ["git", "fetch", "upstream"]:
             return _cp(cmd)
-        if cmd[:2] == ["git", "rebase"]:
+        if cmd[:2] == ["git", "merge"]:
             return _cp(cmd)
         if cmd[:2] == ["git", "push"]:
             return _cp(cmd)
@@ -42,7 +42,7 @@ def test_cmd_sync_happy_path(monkeypatch, capsys):
     mod.cmd_sync(Namespace())
 
     assert ["git", "fetch", "upstream"] in calls
-    assert ["git", "rebase", "upstream/main"] in calls
+    assert ["git", "merge", "--no-edit", "upstream/main"] in calls
     assert ["git", "push", "origin", "viewcommz-main"] in calls
     out = capsys.readouterr().out
     assert "Synced branch 'viewcommz-main' from upstream/main" in out

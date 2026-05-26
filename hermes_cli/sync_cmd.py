@@ -78,10 +78,10 @@ def perform_sync() -> tuple[str, str]:
     run_git(["fetch", "upstream"])
     upstream_branch = detect_upstream_default_branch()
     try:
-        run_git(["rebase", f"upstream/{upstream_branch}"])
+        run_git(["merge", "--no-edit", f"upstream/{upstream_branch}"])
     except SyncError as exc:
         raise SyncError(
-            f"Sync stopped: rebase onto upstream/{upstream_branch} failed. Resolve conflicts manually, then rerun 'hermes sync'."
+            f"Sync stopped: merge from upstream/{upstream_branch} failed. Resolve conflicts manually, then rerun 'hermes sync'."
         ) from exc
     try:
         run_git(["push", "origin", branch])

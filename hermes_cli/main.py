@@ -13420,7 +13420,7 @@ Examples:
     sync_parser = subparsers.add_parser(
         "sync",
         help="Sync the current Hermes fork branch from upstream",
-        description="Fetch upstream, rebase the current branch, and push it to origin.",
+        description="Fetch upstream, merge it into the current branch, and push it to origin.",
     )
     sync_parser.set_defaults(func=cmd_sync)
 
