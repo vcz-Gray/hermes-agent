@@ -297,9 +297,22 @@ def interruptible_api_call(agent, api_kwargs: dict):
         # monitor knows we're alive while waiting for the response.
         if _poll_count % 100 == 0:  # 100 × 0.3s = 30s
             _elapsed = time.time() - _call_start
-            agent._touch_activity(
-                f"waiting for non-streaming response ({int(_elapsed)}s elapsed)"
-            )
+            if agent.api_mode == "codex_responses":
+                _codex_seen_event = (
+                    getattr(agent, "_codex_stream_last_event_ts", None) is not None
+                )
+                agent._touch_activity(
+                    (
+                        "receiving codex stream response"
+                        if _codex_seen_event
+                        else "waiting for codex stream first byte"
+                    )
+                    + f" ({int(_elapsed)}s elapsed)"
+                )
+            else:
+                agent._touch_activity(
+                    f"waiting for non-streaming response ({int(_elapsed)}s elapsed)"
+                )
 
         _elapsed = time.time() - _call_start
 
@@ -343,6 +356,20 @@ def interruptible_api_call(agent, api_kwargs: dict):
 
         # Stale-call detector: kill the connection if no response
         # arrives within the configured timeout.
+        if (
+            agent.api_mode == "codex_responses"
+            and getattr(agent, "_codex_stream_last_event_ts", None) is not None
+        ):
+            # Codex Responses is internally streaming in the worker thread.
+            # Once the first SSE frame arrives, wall-clock "non-streaming"
+            # staleness is the wrong signal: long reasoning/tool-call turns can
+            # legitimately run for many minutes after response.created or
+            # response.in_progress. The TTFB watchdog above still catches the
+            # real silent-hang case where no frame ever arrives; after that,
+            # let the SDK/request timeout own truly wedged streams instead of
+            # killing healthy long-running turns at the non-stream threshold.
+            continue
+
         if _elapsed > _stale_timeout:
             _est_ctx = estimate_request_context_tokens(api_kwargs)
             _silent_hint: Optional[str] = None

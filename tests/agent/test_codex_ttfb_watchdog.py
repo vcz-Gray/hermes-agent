@@ -140,6 +140,53 @@ def test_ttfb_does_not_kill_when_events_flow(tmp_path, monkeypatch):
     assert "codex_ttfb_kill" not in closes
 
 
+def test_codex_stream_event_disables_non_stream_wall_clock_stale(tmp_path, monkeypatch):
+    """A Codex Responses stream that has emitted at least one SSE frame must
+    not be killed by the outer non-streaming wall-clock watchdog.
+
+    Regression for gateway logs that showed
+    ``receiving stream response`` followed by
+    ``Non-streaming API call stale ... Killing connection``. The TTFB watchdog
+    owns the no-first-byte failure mode; after first byte, long reasoning turns
+    should be allowed to finish.
+    """
+    from agent import chat_completion_helpers as h
+
+    agent = _make_codex_agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("HERMES_CODEX_TTFB_TIMEOUT_SECONDS", "0.1")
+    monkeypatch.setattr(
+        agent, "_compute_non_stream_stale_timeout", lambda *a, **k: 0.5
+    )
+
+    closes: list = []
+    dummy_client = SimpleNamespace()
+    monkeypatch.setattr(agent, "_create_request_openai_client", lambda **k: dummy_client)
+    monkeypatch.setattr(
+        agent,
+        "_abort_request_openai_client",
+        lambda c, reason=None: closes.append(reason),
+    )
+    monkeypatch.setattr(
+        agent,
+        "_close_request_openai_client",
+        lambda c, reason=None: closes.append(reason),
+    )
+
+    sentinel = SimpleNamespace(ok=True)
+
+    def fake_stream(api_kwargs, client=None, on_first_delta=None):
+        agent._codex_stream_last_event_ts = time.time()
+        time.sleep(1.2)
+        return sentinel
+
+    monkeypatch.setattr(agent, "_run_codex_stream", fake_stream)
+
+    resp = h.interruptible_api_call(agent, {"model": "gpt-5.5", "input": "hi"})
+    assert resp is sentinel
+    assert "stale_call_kill" not in closes
+    assert "codex_ttfb_kill" not in closes
+
+
 def test_ttfb_disabled_via_env_zero(tmp_path, monkeypatch):
     """Setting HERMES_CODEX_TTFB_TIMEOUT_SECONDS=0 disables the TTFB watchdog;
     a no-event stall then falls through to the (here, 60s) stale timeout, so a
