@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent.title_generator import (
+    generate_discord_thread_title,
     generate_title,
     auto_title_session,
     maybe_auto_title,
@@ -112,6 +113,30 @@ class TestGenerateTitle:
         # The user content in the messages should be truncated
         user_content = captured_kwargs["messages"][1]["content"]
         assert len(user_content) < 1100  # 500 + 500 + formatting
+
+
+class TestGenerateDiscordThreadTitle:
+    """Unit tests for Discord-specific thread titles."""
+
+    def test_returns_meaningful_title_without_decorative_emoji_prefix(self):
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "🧵 Discord 스레드 제목 자동 변경 로직"
+
+        with patch("agent.title_generator.call_llm", return_value=mock_response):
+            title = generate_discord_thread_title("쓰레드 이름 변경 로직 개선해줘")
+
+        assert title == "Discord 스레드 제목 자동 변경 로직"
+
+    def test_preserves_longer_specific_title_before_discord_limit(self):
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Hermes 게이트웨이 스트리밍 응답 중단과 Broken pipe 재시도 문제 조사"
+
+        with patch("agent.title_generator.call_llm", return_value=mock_response):
+            title = generate_discord_thread_title("스트리밍 응답 중단 원인 추적해봐")
+
+        assert title == "Hermes 게이트웨이 스트리밍 응답 중단과 Broken pipe 재시도 문제 조사"
 
 
 class TestAutoTitleSession:

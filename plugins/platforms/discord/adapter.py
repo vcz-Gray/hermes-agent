@@ -280,29 +280,15 @@ def _derive_auto_thread_title(raw_content: str) -> str:
     content = re.sub(r"\s+", " ", content).strip()
 
     if not content:
-        return "🧵 Hermes"
+        return "Hermes"
 
-    emoji = "🧵"
-    lower = content.lower()
-    if any(token in content for token in ("버그", "오류", "에러", "실패", "로그인 문제")):
-        emoji = "🐛"
-    elif any(token in content for token in ("배포", "릴리즈", "출시", "런칭")):
-        emoji = "🚀"
-    elif any(token in content for token in ("제목", "스레드", "thread")) or "thread" in lower:
-        emoji = "🧵"
-    elif any(token in content for token in ("설정", "구성", "config", "configuration")) or "config" in lower:
-        emoji = "⚙️"
-    elif any(token in content for token in ("문서", "가이드", "정리", "요약")):
-        emoji = "📝"
-
-    max_title_len = 15
-    prefix = f"{emoji} "
-    allowed = max(4, max_title_len - len(prefix))
-    if len(content) <= allowed:
-        return f"{prefix}{content}"
-    if allowed >= 2:
-        return f"{prefix}{content[:allowed - 1].rstrip()}…"
-    return f"{prefix}{content[:allowed]}"
+    # Keep the fallback readable and content-heavy. The LLM path is preferred,
+    # but when it is unavailable this should still avoid the old emoji+fragment
+    # style and preserve enough context to be useful in the Discord thread list.
+    max_title_len = 60
+    if len(content) <= max_title_len:
+        return content
+    return content[: max_title_len - 1].rstrip() + "…"
 
 
 def check_discord_requirements() -> bool:
@@ -4298,9 +4284,9 @@ class DiscordAdapter(BasePlatformAdapter):
         suffix = _strip_leading_bracketed_discord_thread_title_prefix(current_title)
         suffix = " ".join(str(suffix or "").split()).strip()
         if not raw_prefix:
-            return suffix or "🧵 Hermes"
+            return suffix or "Hermes"
         if not suffix:
-            suffix = "🧵 Hermes"
+            suffix = "Hermes"
         return _apply_discord_thread_title_prefix(suffix, raw_prefix)
 
     async def _handle_project_command(self, message: DiscordMessage, thread_id: str) -> bool:

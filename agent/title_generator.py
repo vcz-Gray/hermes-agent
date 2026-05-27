@@ -6,6 +6,7 @@ adds latency to the user-facing reply.
 
 import logging
 import threading
+import unicodedata
 from typing import Callable, Optional
 
 from agent.auxiliary_client import call_llm
@@ -25,14 +26,28 @@ _TITLE_PROMPT = (
     "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes."
 )
 
+
+def _strip_leading_symbol_prefix(text: str) -> str:
+    """Remove decorative leading emoji/symbol prefixes from generated titles."""
+    cleaned = (text or "").strip()
+    while cleaned:
+        first = cleaned[0]
+        category = unicodedata.category(first)
+        if category.startswith(("S", "M")) or first in {"-", "–", "—", ":", ";", ",", ".", "!", "?", "~"}:
+            cleaned = cleaned[1:].lstrip()
+            continue
+        break
+    return cleaned
+
 _DISCORD_THREAD_TITLE_PROMPT = (
     "Generate a Discord thread title for the user's opening message. "
     "Hermes is creating or renaming the thread before replying. "
     "Return ONLY the final thread title, nothing else. "
-    "Requirements: include exactly one relevant emoji at the start, then a space, then a concise title-like label. "
+    "Write a meaningful, specific title that captures the actual task or problem, not a decorative label. "
     "Prefer Korean when the user wrote in Korean. Avoid request-style wording like 해줘/부탁해/봐줘. "
-    "Do not echo raw mentions. Aim for about 15 characters total including emoji when possible. "
-    "Good examples: 🧵 제목 정리, 🚀 배포 체크, 🐛 로그인 버그"
+    "Do not echo raw mentions, bot names, markdown, quotes, or a leading emoji. "
+    "Use about 4-10 words, or 12-45 Korean characters, but keep useful nouns and context instead of over-shortening. "
+    "Good examples: Hermes 게이트웨이 스트리밍 응답 중단 조사, Discord 스레드 제목 자동 변경 로직, AWS SSL 인증서 갱신 절차"
 )
 
 
@@ -126,10 +141,11 @@ def generate_discord_thread_title(
         if title.lower().startswith("title:"):
             title = title[6:].strip()
         title = " ".join(title.split())
+        title = _strip_leading_symbol_prefix(title)
         if not title:
             return None
-        if len(title) > 24:
-            title = title[:23].rstrip() + "…"
+        if len(title) > 80:
+            title = title[:79].rstrip() + "…"
         return title
     except Exception as e:
         logger.warning("Discord thread title generation failed: %s", e)
