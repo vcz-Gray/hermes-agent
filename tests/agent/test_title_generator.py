@@ -118,7 +118,7 @@ class TestGenerateTitle:
 class TestGenerateDiscordThreadTitle:
     """Unit tests for Discord-specific thread titles."""
 
-    def test_returns_meaningful_title_without_decorative_emoji_prefix(self):
+    def test_returns_compact_title_with_one_emoji_prefix(self):
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "🧵 Discord 스레드 제목 자동 변경 로직"
@@ -126,17 +126,17 @@ class TestGenerateDiscordThreadTitle:
         with patch("agent.title_generator.call_llm", return_value=mock_response):
             title = generate_discord_thread_title("쓰레드 이름 변경 로직 개선해줘")
 
-        assert title == "Discord 스레드 제목 자동 변경 로직"
+        assert title == "🧵 Discord 스레드 제목 자동 변경 로직"
 
-    def test_preserves_longer_specific_title_before_discord_limit(self):
+    def test_keeps_llm_compaction_and_selects_relevant_emoji(self):
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Hermes 게이트웨이 스트리밍 응답 중단과 Broken pipe 재시도 문제 조사"
+        mock_response.choices[0].message.content = "스트리밍 중단"
 
         with patch("agent.title_generator.call_llm", return_value=mock_response):
             title = generate_discord_thread_title("스트리밍 응답 중단 원인 추적해봐")
 
-        assert title == "Hermes 게이트웨이 스트리밍 응답 중단과 Broken pipe 재시도 문제 조사"
+        assert title == "⚠️ 스트리밍 중단"
 
 
 class TestAutoTitleSession:

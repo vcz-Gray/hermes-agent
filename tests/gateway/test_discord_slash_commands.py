@@ -510,7 +510,7 @@ async def test_auto_create_thread_uses_message_content_as_name(adapter):
     assert result is thread
     message.create_thread.assert_awaited_once()
     call_kwargs = message.create_thread.await_args[1]
-    assert call_kwargs["name"] == "Hello world, how are you"
+    assert call_kwargs["name"] == "💬 Hello world, how are you"
     assert call_kwargs["auto_archive_duration"] == 1440
 
 
@@ -535,7 +535,7 @@ async def test_auto_create_thread_strips_mention_syntax_from_name(adapter):
     name = message.create_thread.await_args[1]["name"]
     assert "<@" not in name, f"role/user mention leaked: {name!r}"
     assert "<#" not in name, f"channel mention leaked: {name!r}"
-    assert name == "help"
+    assert name == "💬 help"
 
 
 @pytest.mark.asyncio
@@ -553,7 +553,7 @@ async def test_auto_create_thread_falls_back_to_hermes_when_only_mentions(adapte
     await adapter._auto_create_thread(message)
 
     name = message.create_thread.await_args[1]["name"]
-    assert name == "Hermes"
+    assert name == "💬 Hermes"
 
 
 @pytest.mark.asyncio
@@ -588,9 +588,9 @@ async def test_auto_create_thread_falls_back_to_seed_message(adapter):
 
     result = await adapter._auto_create_thread(message)
     assert result is thread
-    message.channel.send.assert_awaited_once_with("🧵 Thread created by Hermes: **Hello**")
+    message.channel.send.assert_awaited_once_with("🧵 Thread created by Hermes: **💬 Hello**")
     seed_message.create_thread.assert_awaited_once_with(
-        name="Hello",
+        name="💬 Hello",
         auto_archive_duration=1440,
         reason="Auto-threaded from mention by Jezza",
     )

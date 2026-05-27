@@ -39,15 +39,39 @@ def _strip_leading_symbol_prefix(text: str) -> str:
         break
     return cleaned
 
+
+def _select_discord_thread_title_emoji(text: str) -> str:
+    """Pick one compact emoji for a Discord thread title."""
+    lowered = (text or "").lower()
+    if any(token in text for token in ("중단", "타임아웃", "장애")):
+        return "⚠️"
+    if any(token in text for token in ("버그", "오류", "에러", "실패", "로그인 문제")):
+        return "🐛"
+    if any(token in text for token in ("배포", "릴리즈", "출시", "런칭")):
+        return "🚀"
+    if any(token in text for token in ("스레드", "쓰레드", "제목")) or "thread" in lowered:
+        return "🧵"
+    if any(token in text for token in ("문서", "가이드", "정리", "요약")):
+        return "📝"
+    if any(token in text for token in ("설정", "구성", "인증서")) or any(
+        token in lowered for token in ("config", "configuration", "ssl", "cert")
+    ):
+        return "⚙️"
+    if any(token in text for token in ("보안", "권한", "인증", "인가")) or "oauth" in lowered:
+        return "🔐"
+    return "💬"
+
+
 _DISCORD_THREAD_TITLE_PROMPT = (
     "Generate a Discord thread title for the user's opening message. "
     "Hermes is creating or renaming the thread before replying. "
     "Return ONLY the final thread title, nothing else. "
-    "Write a meaningful, specific title that captures the actual task or problem, not a decorative label. "
+    "Use exactly one relevant emoji at the start, then one space, then a short specific title. "
+    "Capture the actual task or problem, not a generic decorative label. "
     "Prefer Korean when the user wrote in Korean. Avoid request-style wording like 해줘/부탁해/봐줘. "
-    "Do not echo raw mentions, bot names, markdown, quotes, or a leading emoji. "
-    "Use about 4-10 words, or 12-45 Korean characters, but keep useful nouns and context instead of over-shortening. "
-    "Good examples: Hermes 게이트웨이 스트리밍 응답 중단 조사, Discord 스레드 제목 자동 변경 로직, AWS SSL 인증서 갱신 절차"
+    "Do not echo raw mentions, bot names, markdown, or quotes. "
+    "Be as compact as possible while preserving the key noun. Aim for 2-5 words or 8-24 Korean characters after the emoji. "
+    "Good examples: ⚠️ 스트리밍 중단, 🧵 스레드 제목 개선, ⚙️ SSL 인증서 갱신"
 )
 
 
@@ -141,12 +165,16 @@ def generate_discord_thread_title(
         if title.lower().startswith("title:"):
             title = title[6:].strip()
         title = " ".join(title.split())
-        title = _strip_leading_symbol_prefix(title)
-        if not title:
+        compact_title = _strip_leading_symbol_prefix(title)
+        if not compact_title:
             return None
-        if len(title) > 80:
-            title = title[:79].rstrip() + "…"
-        return title
+        emoji = _select_discord_thread_title_emoji(f"{user_snippet} {compact_title}")
+        max_title_len = 30
+        prefix = f"{emoji} "
+        allowed = max_title_len - len(prefix)
+        if len(compact_title) > allowed:
+            compact_title = compact_title[: allowed - 1].rstrip() + "…"
+        return f"{prefix}{compact_title}"
     except Exception as e:
         logger.warning("Discord thread title generation failed: %s", e)
         logger.debug("Discord thread title generation traceback", exc_info=True)

@@ -184,6 +184,28 @@ def _looks_like_generic_existing_thread_title(raw_title: str) -> bool:
     return False
 
 
+def _select_auto_thread_title_emoji(text: str) -> str:
+    """Pick one compact emoji for fallback Discord thread titles."""
+    lowered = (text or "").lower()
+    if any(token in text for token in ("중단", "타임아웃", "장애")):
+        return "⚠️"
+    if any(token in text for token in ("버그", "오류", "에러", "실패", "로그인 문제")):
+        return "🐛"
+    if any(token in text for token in ("배포", "릴리즈", "출시", "런칭")):
+        return "🚀"
+    if any(token in text for token in ("스레드", "쓰레드", "제목")) or "thread" in lowered:
+        return "🧵"
+    if any(token in text for token in ("문서", "가이드", "정리", "요약")):
+        return "📝"
+    if any(token in text for token in ("설정", "구성", "인증서")) or any(
+        token in lowered for token in ("config", "configuration", "ssl", "cert")
+    ):
+        return "⚙️"
+    if any(token in text for token in ("보안", "권한", "인증", "인가")) or "oauth" in lowered:
+        return "🔐"
+    return "💬"
+
+
 def _derive_auto_thread_title(raw_content: str) -> str:
     """Fallback heuristic for Discord thread titles.
 
@@ -193,7 +215,7 @@ def _derive_auto_thread_title(raw_content: str) -> str:
     """
     content = (raw_content or "").strip()
     if not content:
-        return "Hermes"
+        return "💬 Hermes"
 
     # Prefer the first visible line for thread-list readability.
     content = content.splitlines()[0].strip()
@@ -280,15 +302,17 @@ def _derive_auto_thread_title(raw_content: str) -> str:
     content = re.sub(r"\s+", " ", content).strip()
 
     if not content:
-        return "Hermes"
+        return "💬 Hermes"
 
-    # Keep the fallback readable and content-heavy. The LLM path is preferred,
-    # but when it is unavailable this should still avoid the old emoji+fragment
-    # style and preserve enough context to be useful in the Discord thread list.
-    max_title_len = 60
-    if len(content) <= max_title_len:
-        return content
-    return content[: max_title_len - 1].rstrip() + "…"
+    # Keep fallback names compact because Discord thread lists are narrow. The
+    # LLM path is preferred for semantics; fallback preserves the key noun.
+    emoji = _select_auto_thread_title_emoji(content)
+    max_title_len = 30
+    prefix = f"{emoji} "
+    allowed = max(4, max_title_len - len(prefix))
+    if len(content) > allowed:
+        content = content[: allowed - 1].rstrip() + "…"
+    return f"{prefix}{content}"
 
 
 def check_discord_requirements() -> bool:
@@ -4284,9 +4308,9 @@ class DiscordAdapter(BasePlatformAdapter):
         suffix = _strip_leading_bracketed_discord_thread_title_prefix(current_title)
         suffix = " ".join(str(suffix or "").split()).strip()
         if not raw_prefix:
-            return suffix or "Hermes"
+            return suffix or "💬 Hermes"
         if not suffix:
-            suffix = "Hermes"
+            suffix = "💬 Hermes"
         return _apply_discord_thread_title_prefix(suffix, raw_prefix)
 
     async def _handle_project_command(self, message: DiscordMessage, thread_id: str) -> bool:

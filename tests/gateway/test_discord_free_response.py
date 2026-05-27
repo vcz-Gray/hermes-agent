@@ -503,13 +503,13 @@ async def test_existing_thread_is_retitled_before_first_response(adapter, monkey
 
     thread = FakeThread(channel_id=778, name="generic thread")
     thread.edit = AsyncMock()
-    adapter._generate_thread_title = AsyncMock(return_value="Discord 스레드 제목 자동 정리")
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
 
     message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
     await adapter._handle_message(message)
 
     thread.edit.assert_awaited_once_with(
-        name="Discord 스레드 제목 자동 정리",
+        name="🧵 스레드 제목 개선",
         reason="Hermes normalized thread title from first message",
     )
     assert "778" in adapter._threads
@@ -520,9 +520,9 @@ async def test_existing_thread_with_correct_title_skips_edit_but_marks_participa
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
     monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
 
-    thread = FakeThread(channel_id=779, name="Discord 스레드 제목 자동 정리")
+    thread = FakeThread(channel_id=779, name="🧵 스레드 제목 개선")
     thread.edit = AsyncMock()
-    adapter._generate_thread_title = AsyncMock(return_value="Discord 스레드 제목 자동 정리")
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
 
     message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
     await adapter._handle_message(message)
@@ -538,7 +538,7 @@ async def test_existing_thread_rename_failure_still_marks_participation(adapter,
 
     thread = FakeThread(channel_id=780, name="generic thread")
     thread.edit = AsyncMock(side_effect=RuntimeError("no perms"))
-    adapter._generate_thread_title = AsyncMock(return_value="Discord 스레드 제목 자동 정리")
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
 
     message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
     await adapter._handle_message(message)
@@ -553,7 +553,7 @@ async def test_existing_thread_recent_retitle_skips_followup_rename(adapter, mon
     monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
     monkeypatch.setenv("DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS", "21600")
 
-    thread = FakeThread(channel_id=781, name="Discord 스레드 제목 자동 정리")
+    thread = FakeThread(channel_id=781, name="🧵 스레드 제목 개선")
     thread.edit = AsyncMock()
     adapter._threads.mark("781")
     adapter._thread_retitle_timestamps.set("781", str(time.time()))
@@ -575,13 +575,13 @@ async def test_existing_participated_thread_retitles_when_name_is_stale(adapter,
     thread = FakeThread(channel_id=782, name="old thread name")
     thread.edit = AsyncMock()
     adapter._threads.mark("782")
-    adapter._generate_thread_title = AsyncMock(return_value="Discord 스레드 제목 자동 정리")
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
 
     message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
     await adapter._handle_message(message)
 
     thread.edit.assert_awaited_once_with(
-        name="Discord 스레드 제목 자동 정리",
+        name="🧵 스레드 제목 개선",
         reason="Hermes normalized thread title from first message",
     )
     assert "782" in adapter._threads
@@ -597,7 +597,7 @@ async def test_existing_participated_stale_thread_respects_retitle_cooldown(adap
     thread.edit = AsyncMock()
     adapter._threads.mark("783")
     adapter._thread_retitle_timestamps.set("783", str(time.time()))
-    adapter._generate_thread_title = AsyncMock(return_value="Discord 스레드 제목 자동 정리")
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
 
     message = make_message(channel=thread, content="후속 메시지")
     await adapter._handle_message(message)
