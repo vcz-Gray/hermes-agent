@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gling PR 1710 / 1117 Production Risk Report</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121933;
+      --panel2: #0f152b;
+      --text: #e8ecf8;
+      --muted: #a7b1cc;
+      --line: #26304f;
+      --red: #ff6b6b;
+      --amber: #ffcc66;
+      --green: #63e6be;
+      --blue: #74c0fc;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #0a0f1d 0%, #11172c 100%);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.6;
+    }
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { font-size: 34px; margin: 0 0 10px; }
+    h2 { font-size: 24px; margin: 36px 0 14px; }
+    h3 { font-size: 18px; margin: 24px 0 10px; }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); }
+    .hero, .panel {
+      background: rgba(18, 25, 51, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.25);
+    }
+    .hero { padding: 28px; }
+    .panel { padding: 22px 24px; margin-top: 18px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .stat {
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .value {
+      margin-top: 6px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .badge {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    .bad { background: rgba(255,107,107,.16); color: #ff9b9b; border: 1px solid rgba(255,107,107,.25); }
+    .warn { background: rgba(255,204,102,.16); color: #ffd98e; border: 1px solid rgba(255,204,102,.28); }
+    .good { background: rgba(99,230,190,.14); color: #9bf0cf; border: 1px solid rgba(99,230,190,.25); }
+    .info { background: rgba(116,192,252,.14); color: #a8d8ff; border: 1px solid rgba(116,192,252,.25); }
+    code, pre { font-family: var(--mono); }
+    code { color: #c8f0ff; }
+    pre {
+      background: #0b1120;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      overflow: auto;
+      color: #d7e3ff;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+      text-align: left;
+    }
+    th { background: #111935; }
+    td { background: #0d1428; }
+    .risk-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+    .sev { font-weight: 700; }
+    .sev-blocker { color: #ff9b9b; }
+    .sev-major { color: #ffd98e; }
+    .sev-watch { color: #a8d8ff; }
+    ul { padding-left: 20px; }
+    .footer { margin-top: 30px; color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div>
+        <span class="badge bad">배포 판정: 무조건 Go 아님</span>
+        <span class="badge warn">최종 판정: Conditional Go</span>
+      </div>
+      <h1>Gling soft-delete rollout PR 영향 범위 / 프로덕션 리스크 보고서</h1>
+      <p class="muted">대상 PR: FE #1710 / BE #1117 · 기준선: 각 repo <code>origin/dev</code> 대비 · 관점: 실제 프로덕션 반영 전 영향 범위, read/write 계약, migration/apply, restore, QA, 운영 리스크</p>
+
+      <div class="grid">
+        <div class="stat"><div class="label">Frontend PR</div><div class="value">#1710</div><div class="muted">head 15e3b75f · 19 files / +269 -67</div></div>
+        <div class="stat"><div class="label">Backend PR</div><div class="value">#1117</div><div class="muted">head 4f342a79 · 33 files / +2206 -363</div></div>
+        <div class="stat"><div class="label">검증 결과</div><div class="value">Build PASS</div><div class="muted">FE build 성공 / BE build 성공</div></div>
+        <div class="stat"><div class="label">테스트 결과</div><div class="value">7 PASS</div><div class="muted">BE soft-delete 관련 테스트 7건 통과</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>1. 한줄 결론</h2>
+      <p><strong>이 두 PR은 soft-delete 전환의 방향 자체는 맞고 빌드/기본 테스트도 통과했지만, 그대로 즉시 운영에 밀어 넣기엔 위험합니다.</strong> 특히 <strong>(1) 현재 코드/문서가 전제하는 <code>deletedAt</code> 계약과 실제 운영 기준(<code>deletedAt: null</code> 기본 노출)의 정합성</strong>, <strong>(2) FE 회차 목록의 카운트/페이지네이션 정합성 보정 필요</strong>, <strong>(3) apply/restore의 비원자성과 복구 범위 제한</strong>은 운영 전제와 롤아웃 순서를 엄격히 지켜야만 안전합니다.</p>
+    </section>
+
+    <section class="panel">
+      <h2>2. 이번 변경의 실제 영향 범위</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>축</th>
+            <th>영향</th>
+            <th>주요 경로</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Public read-path</td>
+            <td>삭제 작품/회차의 sitemap, search, event, banner, novel detail, viewer 노출 방식이 바뀜</td>
+            <td><code>src/common/utils/visibility-query.ts</code>, <code>src/common/utils/public-visibility.ts</code>, <code>src/routes/sitemap/sitemap.model.ts</code>, <code>src/pages/novel/detail/[_id].tsx</code></td>
+          </tr>
+          <tr>
+            <td>Admin / Studio</td>
+            <td>기본적으로 deleted 숨김, 일부 화면은 필터/카운트/페이지 계산 방식 변경</td>
+            <td><code>src/routes/admin/admin.model.ts</code>, <code>src/features/admin/service/fetchers.ts</code>, <code>src/pages/studio/series-management/chapter-notice/[seriesId].tsx</code></td>
+          </tr>
+          <tr>
+            <td>Write / delete semantics</td>
+            <td>creator / series / chapter / secondary domain 일부가 hard delete 대신 soft-delete 또는 cascade soft-delete로 이동</td>
+            <td><code>src/routes/creator/creator.service.ts</code>, <code>src/routes/novel/novel.service.ts</code>, <code>src/routes/chapter/chapter.service.ts</code>, <code>src/common/utils/delete-associated-data.ts</code></td>
+          </tr>
+          <tr>
+            <td>Migration / rollout</td>
+            <td><code>deletedAt</code> 계약 정렬용 rollout 스크립트, series/chapter/comment/userFeedback 등 backfill/cascade 스크립트 추가</td>
+            <td><code>src/scripts/soft-delete-rollout.job.ts</code>, <code>docs/soft-delete-rollout.md</code></td>
+          </tr>
+          <tr>
+            <td>Restore / ops</td>
+            <td>inspect / dry-run / apply restore 도구가 추가되지만 완전복구는 아님</td>
+            <td><code>src/scripts/soft-delete-restore.tool.ts</code>, <code>docs/soft-delete-restore-runbook.md</code></td>
+          </tr>
+          <tr>
+            <td>Audit / logging</td>
+            <td>structured delete metadata, transaction 정보 보강</td>
+            <td><code>src/common/modules/mongodb/schema-log.ts</code>, <code>tests/audit-log.test.ts</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>3. 핵심 리스크</h2>
+
+      <div class="risk-title"><span class="sev sev-blocker">[Blocker에 가까운 Major]</span> 실제 운영 기준이 <code>deletedAt: null</code> 기본 노출이라면, 현재 코드/문서 전제와 계약이 어긋나 있음</div>
+      <p>사용자 정정 기준으로 보면 <code>deletedAt: null</code>은 레거시 예외가 아니라 <strong>정상적으로 노출돼야 하는 기본 상태</strong>입니다. 그런데 이번 PR의 helper/문서/rollout 설명은 <code>deletedAt 필드 부재</code>를 active canonical처럼 다루고 있습니다.</p>
+      <ul>
+        <li>BE helper: <code>src/common/utils/visibility-query.ts:3-5</code>, <code>src/common/utils/public-visibility.ts:5-17</code></li>
+        <li>sitemap read-path: <code>src/routes/sitemap/sitemap.model.ts:5-27, 40-67</code></li>
+        <li>FE public 진입 가드: <code>src/common/utils/public-series-visibility.ts:16-45</code>, <code>src/pages/novel/detail/[_id].tsx:71-75</code></li>
+        <li>문서상 선행 순서 강제: <code>docs/soft-delete-rollout.md:13-19, 51-55</code></li>
+        <li>정규화 적용은 apply 모드에서만 수행: <code>src/scripts/soft-delete-rollout.job.ts:233-238</code></li>
+      </ul>
+      <p><strong>운영 의미:</strong> 리스크의 본질은 "레거시 데이터가 남아서 위험"이 아니라 <strong>현재 구현/문서가 실제 운영 계약을 잘못 가정하고 있을 수 있다는 점</strong>입니다. 만약 production truth가 정말 <code>deletedAt: null = active</code>라면, helper / migration / 검증 기준 / runbook 문구를 그 계약에 맞게 다시 정렬해야 합니다. 그렇지 않으면 FE sitemap 가드와 BE read-path가 함께 <strong>정상 작품 상세 404</strong>, 검색 누락, admin 기본 목록 누락을 만들 수 있습니다.</p>
+
+      <div class="risk-title"><span class="sev sev-major">[Major]</span> FE 회차 목록의 카운트/페이지네이션 정합성은 실제로 맞춰야 함</div>
+      <ul>
+        <li>관리자 회차 목록 응답을 프론트에서 후처리 필터링: <code>src/features/admin/service/fetchers.ts:224-226</code></li>
+        <li>회차 총개수는 여전히 <code>seriesDetail.chapterCnt</code> 또는 <code>noticeData.totalCnt</code> 사용: <code>src/pages/studio/series-management/chapter-notice/[seriesId].tsx:132-149, 265-301</code></li>
+        <li>동일 패턴이 스튜디오 패널에도 존재: <code>src/features/studio/components/series-content-management-panel.tsx:71-90, 201-239</code></li>
+      </ul>
+      <p><strong>운영 의미:</strong> 이건 단순 관찰 포인트가 아니라 <strong>실제 수정해야 할 정합성 이슈</strong>입니다. 삭제 직후 마지막 페이지가 비었는데 총개수/탭 숫자/페이지 수가 그대로 남으면 운영자 입장에서는 <strong>"회차 수는 남아 있는데 목록은 비고 페이지가 튄다"</strong>는 잘못된 관리 UI가 됩니다. 즉 카운트 계산도 deleted 필터 기준과 같은 계약으로 재정렬돼야 합니다.</p>
+
+      <div class="risk-title"><span class="sev sev-major">[Major]</span> rollout apply / restore / creator 삭제는 비원자적일 뿐 아니라, restore 범위도 제한적임</div>
+      <ul>
+        <li>rollout apply는 여러 컬렉션을 순차 업데이트하며 자동 rollback 없음: <code>src/scripts/soft-delete-rollout.job.ts:223-248</code>, <code>docs/soft-delete-rollout.md:51-55</code></li>
+        <li>restore runbook도 완전복구가 아님: <code>docs/soft-delete-restore-runbook.md:61-107, 109-187</code></li>
+        <li>creator 삭제에서 S3 프로필 이미지를 DB commit 전에 삭제: <code>src/routes/creator/creator.service.ts:173-185</code></li>
+      </ul>
+      <p><strong>운영 의미:</strong> 중간 실패 시 데이터/파일 상태가 어긋날 수 있고, restore도 "삭제 상태만 일부 되돌리는 도구"에 가깝습니다. 구체적으로:</p>
+      <ul>
+        <li><strong>account</strong>는 inspect만 지원하고 auto-restore가 없습니다. auth/MySQL까지 얽혀 있어 별도 수동 복구가 필요합니다. (<code>docs/soft-delete-restore-runbook.md:31-45</code>)</li>
+        <li><strong>creator</strong>는 <code>deletedAt</code> 해제는 가능하지만 nickname/linkInfo 원본 백업이 없으면 완전 복구가 아닙니다. (<code>docs/soft-delete-restore-runbook.md:46-60</code>)</li>
+        <li><strong>series</strong>는 workStatus를 운영자가 명시적으로 다시 정해야 하고, comment / secondary domain은 자동 복구하지 않습니다. (<code>docs/soft-delete-restore-runbook.md:61-83</code>)</li>
+        <li><strong>comment</strong>는 tombstone(<code>삭제된 댓글입니다.</code>) 상태면 원문 백업 없이는 restore apply 자체가 불가능합니다. (<code>docs/soft-delete-restore-runbook.md:96-107</code>)</li>
+        <li><strong>secondary domain</strong>인 announcement / draft / notification / userFeedback는 기본적으로 자동 복구 범위 밖입니다. (<code>docs/soft-delete-restore-runbook.md:183-187</code>)</li>
+      </ul>
+      <p>즉 이 롤아웃은 <strong>"실패해도 원복 버튼이 있는 변경"이 아니라, 백업·승인·수동 절차를 전제로 한 변경</strong>입니다.</p>
+
+      <div class="risk-title"><span class="sev sev-watch">[Watch]</span> FE 공개 판단이 sitemap fan-out + 5분 캐시에 의존</div>
+      <ul>
+        <li>cache TTL 5분: <code>src/common/utils/public-series-visibility.ts:1-5</code></li>
+        <li>전체 sitemap series ID fan-out 수집: <code>src/common/utils/public-series-visibility.ts:22-39</code></li>
+        <li>SSR 진입 시 상세 API보다 먼저 검사: <code>src/pages/novel/detail/[_id].tsx:71-75</code></li>
+      </ul>
+      <p><strong>운영 의미:</strong> 삭제 직후 최대 5분 stale 상태가 남을 수 있고, sitemap 반영 지연이나 API 순간 장애 시 정상 작품이 404로 떨어질 가능성이 있습니다. 데이터 규모가 커질수록 cold path 지연도 늘어납니다.</p>
+
+      <div class="risk-title"><span class="sev sev-watch">[Watch]</span> soft-delete 이후 일부 지표 집계는 drift 가능성이 남음</div>
+      <ul>
+        <li><code>userFeedbackCountPipeline</code> 자체는 deleted 필터를 모름: <code>src/common/utils/userfeedback-accumulator.ts:17-42</code></li>
+        <li>search/home 계열에서 그대로 사용: <code>src/routes/search/search.model.ts:94-102</code>, <code>src/routes/home/home.model.ts</code> 다수 lookup 지점</li>
+      </ul>
+      <p><strong>운영 의미:</strong> 삭제된 series/chapter 관련 userFeedback이 어떤 경로에서는 숨겨지고 어떤 집계에서는 남는 식의 지표 drift가 생길 수 있습니다. 즉시 public leak보다 우선순위는 낮지만, 랭킹/추천/정렬 일관성 관점에서 추적이 필요합니다.</p>
+    </section>
+
+    <section class="panel">
+      <h2>4. 이미 잘 막고 있는 점</h2>
+      <ul>
+        <li>FE/BE 모두 deleted 기본 숨김 방향이 꽤 일관되게 들어갔습니다. 특히 sitemap/search/event/banner/public detail 경로에 공용 helper를 적용한 점은 좋습니다.<br />
+          <code>src/common/utils/visibility-query.ts</code>, <code>src/common/utils/public-visibility.ts</code>, <code>src/routes/search/search.model.ts</code>, <code>src/routes/event/event.model.ts</code>, <code>src/routes/banner/banner.model.ts</code></li>
+        <li>SSR에서 401/403/404 fallback이 더 명시적으로 바뀌어, 예전보다 불명확한 실패 상태는 줄었습니다.<br />
+          <code>src/pages/cash/history/charge-detail/[orderId].tsx</code>, <code>src/pages/event/[eventId].tsx</code>, <code>src/pages/studio/series-management/update/[seriesId].tsx</code></li>
+        <li>structured audit log와 transaction metadata 테스트가 있어, soft-delete의 감사 가능성은 이전보다 좋아졌습니다.<br />
+          <code>tests/audit-log.test.ts</code></li>
+        <li>restore runbook이 무엇을 자동복구하지 못하는지 솔직하게 적어둔 점은 운영 사고를 줄이는 데 도움이 됩니다.<br />
+          <code>docs/soft-delete-restore-runbook.md</code></li>
+        <li>실제 검증도 최소 기준은 통과했습니다: FE build 성공, BE build 성공, BE 관련 테스트 7건 통과.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>5. 배포 전 필수 확인 사항</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>우선순위</th>
+            <th>해야 할 일</th>
+            <th>이유</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>P0</td>
+            <td><code>deletedAt</code> 실제 운영 계약(<code>null</code> 기본 노출인지, field absence canonical인지)을 먼저 확정하고, 그 계약에 맞춰 helper / rollout / runbook / 검증 기준을 정렬</td>
+            <td>현재 보고서 초안의 가장 큰 오류였고, 계약이 어긋나면 public/admin read-path 전체 판단이 틀어짐</td>
+          </tr>
+          <tr>
+            <td>P0</td>
+            <td>FE 회차 목록의 총개수/탭 숫자/페이지네이션 계산도 deleted 필터 계약과 같게 수정</td>
+            <td>현재는 목록만 필터링되고 카운트는 원본 값을 써서 관리 UI가 틀릴 수 있음</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>apply 전/후 report 결과에서 어떤 값을 0으로 봐야 하는지도 실제 계약 기준에 맞게 재정의 후 확인</td>
+            <td><code>legacyNull</code> 자체를 이상치로 볼지 정상 기본값으로 볼지부터 확정돼야 함</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>회차가 2페이지 이상인 작품으로 삭제 직후 FE pagination 실QA</td>
+            <td>카운트/목록 mismatch가 실제로 사라졌는지 확인 필요</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>작품 삭제 직후 / 5분 이내 / 5분 후 <code>/novel/detail/[id]</code>와 sitemap 반영 상태를 함께 확인</td>
+            <td>sitemap cache 기반 stale/noise 여부 확인</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td>creator 삭제 실패 drill 또는 최소 dry-run 복구 drill 수행</td>
+            <td>S3 선삭제 + restore 제한 때문에 수습 가능성 점검 필요</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td>home/search/ranking/event 추천/정렬 지표의 userFeedback drift spot check</td>
+            <td>지표가 삭제 상태와 완전히 동기화되지 않을 수 있음</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>6. 검증 로그 요약</h2>
+      <h3>Frontend</h3>
+      <pre>worktree: /Users/viewcommz/Desktop/projects/gling_platform/.review-wt-fe-1710
+base: 983a16037eb9bf14cff2cdd10fb984e7c4f21b45 (origin/dev)
+head: 15e3b75f46c72768fb568645502b680d4f7e8eb5
+command: npm run build
+result: success (existing eslint warnings only)</pre>
+
+      <h3>Backend</h3>
+      <pre>worktree: /Users/viewcommz/Desktop/projects/gling_platform/.review-wt-be-1117
+base: 52636bb1ef5eac835bf21a6b28835154ebdf64a8 (origin/dev)
+head: 4f342a79dacb49b22ddf19ba5b19d7b92e029299
+command: npm run build
+result: success
+
+command: node --test -r ts-node/register -r tsconfig-paths/register ./tests/soft-delete-read-path.test.ts ./tests/audit-log.test.ts
+result: 7 passed / 0 failed</pre>
+    </section>
+
+    <section class="panel">
+      <h2>7. 최종 판정</h2>
+      <p><strong>판정: Conditional Go</strong></p>
+      <ul>
+        <li><strong>Go 조건 1:</strong> 먼저 <code>deletedAt: null</code>이 production default visible state인지 공식 계약으로 확정하고, helper / migration / runbook / QA 기준을 그 계약에 맞출 것</li>
+        <li><strong>Go 조건 2:</strong> FE 회차 목록의 카운트/페이지네이션 정합성을 코드로 맞춘 뒤 실QA까지 끝낼 것</li>
+        <li><strong>Go 조건 3:</strong> creator 삭제/restore는 "완전 rollback 가능"하다고 가정하지 말고 백업/운영 승인 하에만 실행할 것</li>
+      </ul>
+      <p>반대로 위 조건 없이 순서가 어긋난 채 배포하면, 이 변경은 <strong>삭제 콘텐츠 은닉 강화</strong>가 아니라 <strong>계약 오판에 따른 정상 콘텐츠 과차단</strong>, <strong>관리 UI 정합성 붕괴</strong>, <strong>운영 복구 난이도 상승</strong>으로 돌아올 수 있습니다.</p>
+    </section>
+
+    <div class="footer">
+      Generated by Hermes after local codebase analysis, PR metadata inspection, FE/BE build verification, and backend soft-delete test execution.
+    </div>
+  </div>
+</body>
+</html>
