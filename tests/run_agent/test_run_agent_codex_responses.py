@@ -186,10 +186,11 @@ class _FakeCreateStream:
         self.closed = True
 
 
-class _FakeResponsesStreamWithEventsThenError:
-    def __init__(self, events, error):
-        self._events = list(events)
-        self._error = error
+class _IteratorTypeErrorStream:
+    """Mimic the SDK raising while parsing response.completed.output=None."""
+
+    def __init__(self, events_before_error):
+        self._events_before_error = list(events_before_error)
 
     def __enter__(self):
         return self
@@ -198,12 +199,12 @@ class _FakeResponsesStreamWithEventsThenError:
         return False
 
     def __iter__(self):
-        for event in self._events:
+        for event in self._events_before_error:
             yield event
-        raise self._error
+        raise TypeError("'NoneType' object is not iterable")
 
-    def get_final_response(self):
-        raise AssertionError("stream parser error should prevent final response")
+    def get_final_response(self):  # pragma: no cover - iterator fails first
+        raise AssertionError("get_final_response should not be reached")
 
 
 def _codex_request_kwargs():
@@ -504,50 +505,38 @@ def test_run_codex_stream_fallback_parses_create_stream_events(monkeypatch):
     assert response.output[0].content[0].text == "streamed create ok"
 
 
-def test_run_codex_stream_falls_back_when_sdk_parser_hits_null_output(monkeypatch):
+def test_run_codex_stream_falls_back_when_stream_iteration_parses_null_output(monkeypatch):
+    """Regression for #11179: the SDK can raise while iterating response.completed.
+
+    The failure happens before get_final_response(), so post-loop backfill alone is
+    not enough. Preserve already streamed output_item.done events.
+    """
     agent = _build_agent(monkeypatch)
-    calls = {"stream": 0, "create": 0}
+    output_item = SimpleNamespace(
+        type="message",
+        status="completed",
+        content=[SimpleNamespace(type="output_text", text="stream item survived")],
+    )
+    calls = {"stream": 0}
 
     def _fake_stream(**kwargs):
         calls["stream"] += 1
-        return _FakeResponsesStreamWithEventsThenError(
-            [
-                SimpleNamespace(type="response.created"),
-                SimpleNamespace(
-                    type="response.output_item.done",
-                    item=_codex_message_response("unused").output[0],
-                ),
-            ],
-            TypeError("'NoneType' object is not iterable"),
-        )
+        return _IteratorTypeErrorStream([
+            SimpleNamespace(type="response.output_item.done", item=output_item),
+        ])
 
-    def _fake_create(**kwargs):
-        calls["create"] += 1
-        return _FakeCreateStream(
-            [
-                SimpleNamespace(type="response.created"),
-                SimpleNamespace(
-                    type="response.output_item.done",
-                    item=_codex_message_response("recovered from null output").output[0],
-                ),
-                SimpleNamespace(
-                    type="response.completed",
-                    response=SimpleNamespace(output=None, status="completed"),
-                ),
-            ]
-        )
+    def _unexpected_create(**kwargs):  # pragma: no cover - recovery should avoid fallback call
+        raise AssertionError("create fallback should not be needed when output items were collected")
 
     agent.client = SimpleNamespace(
-        responses=SimpleNamespace(
-            stream=_fake_stream,
-            create=_fake_create,
-        )
+        responses=SimpleNamespace(stream=_fake_stream, create=_unexpected_create),
     )
 
     response = agent._run_codex_stream(_codex_request_kwargs())
 
-    assert calls == {"stream": 2, "create": 1}
-    assert response.output[0].content[0].text == "recovered from null output"
+    assert calls["stream"] == 1
+    assert response.output == [output_item]
+    assert response.status == "completed"
 
 
 def test_run_codex_stream_fallback_backfills_null_output_from_done_items(monkeypatch):
