@@ -186,6 +186,26 @@ class _FakeCreateStream:
         self.closed = True
 
 
+class _FakeResponsesStreamWithEventsThenError:
+    def __init__(self, events, error):
+        self._events = list(events)
+        self._error = error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def __iter__(self):
+        for event in self._events:
+            yield event
+        raise self._error
+
+    def get_final_response(self):
+        raise AssertionError("stream parser error should prevent final response")
+
+
 def _codex_request_kwargs():
     return {
         "model": "gpt-5-codex",
@@ -482,6 +502,80 @@ def test_run_codex_stream_fallback_parses_create_stream_events(monkeypatch):
     assert calls["create"] == 1
     assert create_stream.closed is True
     assert response.output[0].content[0].text == "streamed create ok"
+
+
+def test_run_codex_stream_falls_back_when_sdk_parser_hits_null_output(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    calls = {"stream": 0, "create": 0}
+
+    def _fake_stream(**kwargs):
+        calls["stream"] += 1
+        return _FakeResponsesStreamWithEventsThenError(
+            [
+                SimpleNamespace(type="response.created"),
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=_codex_message_response("unused").output[0],
+                ),
+            ],
+            TypeError("'NoneType' object is not iterable"),
+        )
+
+    def _fake_create(**kwargs):
+        calls["create"] += 1
+        return _FakeCreateStream(
+            [
+                SimpleNamespace(type="response.created"),
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=_codex_message_response("recovered from null output").output[0],
+                ),
+                SimpleNamespace(
+                    type="response.completed",
+                    response=SimpleNamespace(output=None, status="completed"),
+                ),
+            ]
+        )
+
+    agent.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            stream=_fake_stream,
+            create=_fake_create,
+        )
+    )
+
+    response = agent._run_codex_stream(_codex_request_kwargs())
+
+    assert calls == {"stream": 2, "create": 1}
+    assert response.output[0].content[0].text == "recovered from null output"
+
+
+def test_run_codex_stream_fallback_backfills_null_output_from_done_items(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    create_stream = _FakeCreateStream(
+        [
+            SimpleNamespace(type="response.created"),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=_codex_message_response("fallback recovered").output[0],
+            ),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(output=None, status="completed"),
+            ),
+        ]
+    )
+
+    agent.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            create=lambda **kwargs: create_stream,
+        )
+    )
+
+    response = agent._run_codex_create_stream_fallback(_codex_request_kwargs())
+
+    assert create_stream.closed is True
+    assert response.output[0].content[0].text == "fallback recovered"
 
 
 def test_run_conversation_codex_plain_text(monkeypatch):
