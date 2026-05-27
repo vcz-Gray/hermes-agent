@@ -167,6 +167,8 @@ def _looks_like_generic_existing_thread_title(raw_title: str) -> bool:
         "new thread",
         "generic thread",
         "long generic thread",
+        "old thread",
+        "old thread name",
         "untitled",
         "untitled thread",
         "새 스레드",

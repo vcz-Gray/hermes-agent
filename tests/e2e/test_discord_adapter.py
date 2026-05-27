@@ -5,6 +5,7 @@ Covers the fix for slash commands not being recognized when sent via
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -225,6 +226,46 @@ class TestExistingThreadRetitle:
         thread = make_fake_thread(thread_id=90014, name="🧵 제목 정리")
         thread.edit = AsyncMock()
         discord_adapter._threads.mark(str(thread.id))
+
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> 후속 질문이야",
+            channel=thread,
+            mentions=[bot_user],
+        )
+        discord_adapter._generate_thread_title = AsyncMock(return_value="🧵 다른 제목")
+
+        await dispatch(discord_adapter, msg)
+
+        thread.edit.assert_not_awaited()
+        discord_adapter._generate_thread_title.assert_not_awaited()
+
+    async def test_existing_participated_thread_still_retitles_when_name_is_stale(self, discord_adapter, bot_user, monkeypatch):
+        monkeypatch.setenv("DISCORD_AUTO_THREAD", "true")
+        thread = make_fake_thread(thread_id=90015, name="old thread name")
+        thread.edit = AsyncMock()
+        discord_adapter._threads.mark(str(thread.id))
+
+        msg = make_discord_message(
+            content=f"<@{BOT_USER_ID}> 헤르메스야, 이 디스코드 채널에서 새로운 쓰레드 제목 자연스럽게 정리해줘",
+            channel=thread,
+            mentions=[bot_user],
+        )
+        discord_adapter._generate_thread_title = AsyncMock(return_value="🧵 제목 정리")
+
+        await dispatch(discord_adapter, msg)
+
+        thread.edit.assert_awaited_once_with(
+            name="🧵 제목 정리",
+            reason="Hermes normalized thread title from first message",
+        )
+
+    async def test_existing_participated_stale_thread_respects_retitle_cooldown(self, discord_adapter, bot_user, monkeypatch):
+        monkeypatch.setenv("DISCORD_AUTO_THREAD", "true")
+        monkeypatch.setenv("DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS", "21600")
+        thread = make_fake_thread(thread_id=90016, name="old thread name")
+        thread.edit = AsyncMock()
+        discord_adapter._threads.mark(str(thread.id))
+        discord_adapter._thread_retitle_timestamps.set(str(thread.id), str(time.time()))
 
         msg = make_discord_message(
             content=f"<@{BOT_USER_ID}> 후속 질문이야",

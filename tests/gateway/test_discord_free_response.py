@@ -568,6 +568,46 @@ async def test_existing_thread_recent_retitle_skips_followup_rename(adapter, mon
 
 
 @pytest.mark.asyncio
+async def test_existing_participated_thread_retitles_when_name_is_stale(adapter, monkeypatch):
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+
+    thread = FakeThread(channel_id=782, name="old thread name")
+    thread.edit = AsyncMock()
+    adapter._threads.mark("782")
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 제목 정리")
+
+    message = make_message(channel=thread, content="쓰레드 제목 자연스럽게 정리해줘")
+    await adapter._handle_message(message)
+
+    thread.edit.assert_awaited_once_with(
+        name="🧵 제목 정리",
+        reason="Hermes normalized thread title from first message",
+    )
+    assert "782" in adapter._threads
+
+
+@pytest.mark.asyncio
+async def test_existing_participated_stale_thread_respects_retitle_cooldown(adapter, monkeypatch):
+    monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("DISCORD_AUTO_THREAD", "false")
+    monkeypatch.setenv("DISCORD_EXISTING_THREAD_RETITLE_COOLDOWN_SECONDS", "21600")
+
+    thread = FakeThread(channel_id=783, name="old thread name")
+    thread.edit = AsyncMock()
+    adapter._threads.mark("783")
+    adapter._thread_retitle_timestamps.set("783", str(time.time()))
+    adapter._generate_thread_title = AsyncMock(return_value="🧵 제목 정리")
+
+    message = make_message(channel=thread, content="후속 메시지")
+    await adapter._handle_message(message)
+
+    adapter._generate_thread_title.assert_not_awaited()
+    thread.edit.assert_not_awaited()
+    assert "783" in adapter._threads
+
+
+@pytest.mark.asyncio
 async def test_discord_voice_linked_channel_skips_mention_requirement_and_auto_thread(adapter, monkeypatch):
 
     monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "true")
@@ -956,5 +996,4 @@ async def test_discord_dm_does_not_backfill(adapter, monkeypatch):
     if adapter.handle_message.await_args is not None:
         event = adapter.handle_message.await_args.args[0]
         assert event.channel_context is None
-
 
