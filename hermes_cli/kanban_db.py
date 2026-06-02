@@ -1385,53 +1385,43 @@ def connect(
     else:
         path = kanban_db_path(board=board)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with _cross_process_init_lock(path):
-        # Cheap byte-level check first — catches the #29507 TLS-overwrite shape
-        # and other invalid-header cases without opening a sqlite connection.
-        _validate_sqlite_header(path)
-        # Full integrity probe — catches corruption past the header (malformed
-        # pages, broken internal metadata). Cached per-path after first success
-        # via _INITIALIZED_PATHS so it only runs once per process per path.
-        _guard_existing_db_is_healthy(path)
-        resolved = str(path.resolve())
-        conn = _sqlite_connect(path)
-        try:
-            conn.row_factory = sqlite3.Row
-            with _INIT_LOCK:
-                # WAL activation can take an exclusive lock while SQLite creates the
-                # sidecar files for a fresh database. Keep it in the same process-local
-                # critical section as schema initialization so concurrent gateway
-                # startup threads do not race before _INITIALIZED_PATHS is populated.
-                # WAL doesn't work on network filesystems (NFS/SMB/FUSE). Shared helper
-                # falls back to DELETE with one WARNING so kanban stays usable there.
-                # See hermes_state._WAL_INCOMPAT_MARKERS for detection logic.
-                from hermes_state import apply_wal_with_fallback
-                apply_wal_with_fallback(conn, db_label=f"kanban.db ({path.name})")
-                # FULL (was NORMAL): fsync before each checkpoint to narrow the
-                # crash window that can leave a b-tree page header torn.
-                conn.execute("PRAGMA synchronous=FULL")
-                conn.execute("PRAGMA wal_autocheckpoint=100")
-                conn.execute("PRAGMA foreign_keys=ON")
-                # Zero freed pages so a later torn write cannot expose stale
-                # cell content; persisted in the DB header for new DBs.
-                conn.execute("PRAGMA secure_delete=ON")
-                # Surface corrupt cells as read errors instead of silent
-                # wrong-data returns.
-                conn.execute("PRAGMA cell_size_check=ON")
-                needs_init = resolved not in _INITIALIZED_PATHS
-                if needs_init:
-                    # Idempotent: runs CREATE TABLE IF NOT EXISTS + the additive
-                    # migrations. Cached so subsequent connect() calls in the same
-                    # process are cheap. The lock prevents same-process dispatcher
-                    # threads from racing through the additive ALTER TABLE pass with
-                    # stale PRAGMA snapshots during gateway startup.
-                    conn.executescript(SCHEMA_SQL)
-                    _migrate_add_optional_columns(conn)
-                    conn.executescript(SCHEMA_INDEX_SQL)
-                    _INITIALIZED_PATHS.add(resolved)
-        except Exception:
-            conn.close()
-            raise
+    # Cheap byte-level check first — catches the #29507 TLS-overwrite shape
+    # and other invalid-header cases without opening a sqlite connection.
+    _validate_sqlite_header(path)
+    # Full integrity probe — catches corruption past the header (malformed
+    # pages, broken internal metadata). Cached per-path after first success
+    # via _INITIALIZED_PATHS so it only runs once per process per path.
+    _guard_existing_db_is_healthy(path)
+    resolved = str(path.resolve())
+    conn = sqlite3.connect(str(path), isolation_level=None, timeout=30)
+    try:
+        conn.row_factory = sqlite3.Row
+        with _INIT_LOCK:
+            # WAL activation can take an exclusive lock while SQLite creates the
+            # sidecar files for a fresh database. Keep it in the same process-local
+            # critical section as schema initialization so concurrent gateway
+            # startup threads do not race before _INITIALIZED_PATHS is populated.
+            # WAL doesn't work on network filesystems (NFS/SMB/FUSE). Shared helper
+            # falls back to DELETE with one WARNING so kanban stays usable there.
+            # See hermes_state._WAL_INCOMPAT_MARKERS for detection logic.
+            from hermes_state import apply_wal_with_fallback
+            apply_wal_with_fallback(conn, db_label=f"kanban.db ({path.name})")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            needs_init = resolved not in _INITIALIZED_PATHS
+            if needs_init:
+                # Idempotent: runs CREATE TABLE IF NOT EXISTS + the additive
+                # migrations. Cached so subsequent connect() calls in the same
+                # process are cheap. The lock prevents same-process dispatcher
+                # threads from racing through the additive ALTER TABLE pass with
+                # stale PRAGMA snapshots during gateway startup.
+                conn.executescript(SCHEMA_SQL)
+                _migrate_add_optional_columns(conn)
+                conn.executescript(SCHEMA_INDEX_SQL)
+                _INITIALIZED_PATHS.add(resolved)
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
