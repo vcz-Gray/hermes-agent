@@ -9907,6 +9907,49 @@ def _cmd_update_impl(args, gateway_mode: bool):
         else:
             print("  ✓ Configuration is up to date")
 
+        # Apply the same safe config migration pass to every profile. Code,
+        # deps, bundled skills, and gateway restarts already fan out across
+        # profiles, but config.yaml/.env live under each profile's HERMES_HOME.
+        # Non-interactive migration keeps defaults/version bumps aligned
+        # everywhere while still surfacing profiles that need manual API-key
+        # entry afterward.
+        try:
+            from hermes_cli.profiles import list_profiles, migrate_profile_config
+
+            all_profiles = list_profiles()
+            if all_profiles:
+                print()
+                print("→ Syncing config migrations to all profiles...")
+                for p in all_profiles:
+                    try:
+                        r = migrate_profile_config(p.path, quiet=True)
+                        if not r:
+                            status = "sync failed"
+                        elif r.get("status") == "needs_manual_env":
+                            missing_env = r.get("missing_env_after", [])
+                            suffix = f" (manual env: {', '.join(missing_env[:3])})" if missing_env else ""
+                            status = f"needs manual env{suffix}"
+                        elif r.get("status") == "migrated":
+                            env_added = len(r.get("env_added", []))
+                            cfg_added = len(r.get("config_added", []))
+                            parts = []
+                            if cfg_added:
+                                parts.append(f"+{cfg_added} config")
+                            if env_added:
+                                parts.append(f"+{env_added} env")
+                            if not parts and r.get("before_version") != r.get("after_version"):
+                                before = r.get("before_version", ["?", "?"])
+                                after = r.get("after_version", ["?", "?"])
+                                parts.append(f"v{before[0]}→v{after[0]}")
+                            status = ", ".join(parts) if parts else "migrated"
+                        else:
+                            status = "up to date"
+                        print(f"  {p.name}: {status}")
+                    except Exception as pe:
+                        print(f"  {p.name}: error ({pe})")
+        except Exception:
+            pass
+
         # Safety net: config-version migrations have been observed to leave
         # cron/jobs.json valid-but-empty, silently dropping every scheduled
         # job (issue #34600). If the live file is now empty while the

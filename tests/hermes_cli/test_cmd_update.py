@@ -436,6 +436,74 @@ class TestCmdUpdateProfileSkillSync:
         assert default_p.path in synced_paths
 
 
+class TestCmdUpdateProfileConfigSync:
+    @patch("shutil.which", return_value=None)
+    @patch("subprocess.run")
+    def test_all_profiles_receive_noninteractive_config_sync(
+        self, mock_run, _mock_which, mock_args, capsys
+    ):
+        from pathlib import Path
+
+        mock_run.side_effect = _make_run_side_effect(
+            branch="main", verify_ok=True, commit_count="1"
+        )
+
+        default_p = SimpleNamespace(name="default", path=Path("/fake/.hermes"))
+        active_p = SimpleNamespace(name="bit", path=Path("/fake/.hermes/profiles/bit"))
+        other_p = SimpleNamespace(name="work", path=Path("/fake/.hermes/profiles/work"))
+        all_profiles = [default_p, active_p, other_p]
+        migrated_paths = []
+
+        def fake_migrate(path, quiet=False):
+            migrated_paths.append(path)
+            if path == active_p.path:
+                return {
+                    "status": "migrated",
+                    "env_added": [],
+                    "config_added": ["display.footer"],
+                    "before_version": [1, 24],
+                    "after_version": [24, 24],
+                    "missing_env_after": [],
+                }
+            if path == other_p.path:
+                return {
+                    "status": "needs_manual_env",
+                    "env_added": [],
+                    "config_added": [],
+                    "before_version": [24, 24],
+                    "after_version": [24, 24],
+                    "missing_env_after": ["OPENAI_API_KEY"],
+                }
+            return {
+                "status": "up_to_date",
+                "env_added": [],
+                "config_added": [],
+                "before_version": [24, 24],
+                "after_version": [24, 24],
+                "missing_env_after": [],
+            }
+
+        empty_sync = {"copied": [], "updated": [], "user_modified": [], "cleaned": []}
+
+        with (
+            patch("tools.skills_sync.sync_skills", return_value=empty_sync),
+            patch("hermes_cli.profiles.seed_profile_skills", return_value={"copied": [], "updated": [], "user_modified": []}),
+            patch("hermes_cli.profiles.list_profiles", return_value=all_profiles),
+            patch("hermes_cli.profiles.migrate_profile_config", side_effect=fake_migrate),
+            patch("hermes_cli.config.get_missing_env_vars", return_value=[]),
+            patch("hermes_cli.config.get_missing_config_fields", return_value=[]),
+            patch("hermes_cli.config.check_config_version", return_value=(24, 24)),
+        ):
+            cmd_update(mock_args)
+
+        assert set(migrated_paths) == {p.path for p in all_profiles}
+        out = capsys.readouterr().out
+        assert "Syncing config migrations to all profiles" in out
+        assert "default: up to date" in out
+        assert "bit: +1 config" in out
+        assert "work: needs manual env (manual env: OPENAI_API_KEY)" in out
+
+
 class TestCmdUpdateBranchFlag:
     """``hermes update --branch <name>`` targets the requested branch.
 

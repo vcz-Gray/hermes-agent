@@ -871,6 +871,74 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
         return None
 
 
+def migrate_profile_config(profile_dir: Path, quiet: bool = False) -> Optional[dict]:
+    """Apply non-interactive config migration for one profile via subprocess.
+
+    ``hermes update`` already updates shared code once for every profile, but
+    config.yaml/.env live per-profile under distinct ``HERMES_HOME`` roots.
+    This helper lets update fan out the safe, non-interactive migration pass to
+    every profile without polluting module-level HERMES_HOME caches.
+
+    Returns a JSON-serializable dict with the profile's migration summary, or
+    ``None`` on failure.
+    """
+    project_root = Path(__file__).parent.parent.resolve()
+    script = (
+        "import json; "
+        "from hermes_cli.config import "
+        "get_missing_env_vars, get_missing_config_fields, check_config_version, migrate_config; "
+        "before_env = get_missing_env_vars(required_only=True); "
+        "before_cfg = get_missing_config_fields(); "
+        "before_ver = check_config_version(); "
+        "needs = bool(before_env or before_cfg or before_ver[0] < before_ver[1]); "
+        "migration = {'env_added': [], 'config_added': [], 'warnings': []}; "
+        "migration_ran = False; "
+        "if needs: "
+        "    migration = migrate_config(interactive=False, quiet=True) or migration; "
+        "    migration_ran = True; "
+        "after_env = get_missing_env_vars(required_only=True); "
+        "after_cfg = get_missing_config_fields(); "
+        "after_ver = check_config_version(); "
+        "status = ('needs_manual_env' if after_env else ('migrated' if migration_ran else 'up_to_date')); "
+        "print(json.dumps({"
+        "'status': status, "
+        "'migration_ran': migration_ran, "
+        "'before_version': list(before_ver), "
+        "'after_version': list(after_ver), "
+        "'missing_env_before': [item.get('name') for item in before_env], "
+        "'missing_env_after': [item.get('name') for item in after_env], "
+        "'missing_config_before': [item.get('key') for item in before_cfg], "
+        "'missing_config_after': [item.get('key') for item in after_cfg], "
+        "'env_added': migration.get('env_added', []), "
+        "'config_added': migration.get('config_added', []), "
+        "'warnings': migration.get('warnings', [])}, ensure_ascii=False))"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "HERMES_HOME": str(profile_dir)},
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout.strip())
+        if not quiet:
+            print(f"⚠ Config migration returned exit code {result.returncode}")
+            if result.stderr.strip():
+                print(f"  {result.stderr.strip()[:200]}")
+        return None
+    except subprocess.TimeoutExpired:
+        if not quiet:
+            print("⚠ Config migration timed out (60s)")
+        return None
+    except Exception as e:
+        if not quiet:
+            print(f"⚠ Config migration failed: {e}")
+        return None
+
+
 def delete_profile(name: str, yes: bool = False) -> Path:
     """Delete a profile, its wrapper script, and its gateway service.
 

@@ -226,6 +226,26 @@ def _select_auto_thread_title_emoji(text: str) -> str:
     return "💬"
 
 
+def _ensure_discord_thread_title_emoji(title: str, source_text: str = "") -> str:
+    """Ensure generated Discord thread titles keep a compact leading emoji.
+
+    The fallback heuristic already prepends one, but LLM-generated titles often
+    come back as plain text. Normalize both paths so newly created threads and
+    existing-thread retitles stay visually scannable in Discord's thread list.
+    """
+    cleaned = " ".join(str(title or "").split()).strip()
+    if not cleaned:
+        cleaned = "Hermes"
+    prefix = _extract_bracketed_discord_thread_title_prefix(cleaned)
+    body = _strip_leading_bracketed_discord_thread_title_prefix(cleaned)
+    if not body:
+        body = "Hermes"
+    if re.match(r"^[A-Za-z0-9가-힣]", body):
+        emoji = _select_auto_thread_title_emoji(source_text or body)
+        body = f"{emoji} {body}"
+    return _apply_discord_thread_title_prefix(body, prefix)
+
+
 def _derive_auto_thread_title(raw_content: str) -> str:
     """Fallback heuristic for Discord thread titles.
 
@@ -4291,6 +4311,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # copy of the raw request. Fall back to the local heuristic on failure.
         content = (getattr(starter_message, "content", None) or message.content or "").strip()
         thread_name = await self._generate_thread_title(content)
+        thread_name = _ensure_discord_thread_title_emoji(thread_name, content)
 
         try:
             thread = await starter_message.create_thread(name=thread_name, auto_archive_duration=1440)
@@ -4395,16 +4416,25 @@ class DiscordAdapter(BasePlatformAdapter):
         configured_prefix = self._get_thread_title_prefix(content, current_thread_name, thread_id)
         content_for_generation = _strip_leading_bracketed_discord_thread_title_prefix(content)
         if not content_for_generation:
-            return _apply_discord_thread_title_prefix(_derive_auto_thread_title(content_for_generation), configured_prefix)
+            return _ensure_discord_thread_title_emoji(
+                _apply_discord_thread_title_prefix(_derive_auto_thread_title(content_for_generation), configured_prefix),
+                content,
+            )
         try:
             from agent.title_generator import generate_discord_thread_title
             title = await asyncio.to_thread(generate_discord_thread_title, content_for_generation)
             cleaned = " ".join(str(title or "").split()).strip()
             if cleaned:
-                return _apply_discord_thread_title_prefix(cleaned, configured_prefix)
+                return _ensure_discord_thread_title_emoji(
+                    _apply_discord_thread_title_prefix(cleaned, configured_prefix),
+                    content_for_generation,
+                )
         except Exception as exc:
             logger.debug("[%s] LLM thread-title generation crashed; falling back: %s", self.name, exc)
-        return _apply_discord_thread_title_prefix(_derive_auto_thread_title(content_for_generation), configured_prefix)
+        return _ensure_discord_thread_title_emoji(
+            _apply_discord_thread_title_prefix(_derive_auto_thread_title(content_for_generation), configured_prefix),
+            content_for_generation,
+        )
 
     async def _maybe_retitle_existing_thread(self, message: 'DiscordMessage') -> None:
         """Rename the current Discord thread before the first Hermes response.
@@ -4429,6 +4459,7 @@ class DiscordAdapter(BasePlatformAdapter):
                     return
             content = (getattr(message, "content", None) or "").strip()
             derived_name = await self._generate_thread_title(content, current_name, thread_id)
+            derived_name = _ensure_discord_thread_title_emoji(derived_name, content)
             if not derived_name or derived_name == current_name:
                 self._mark_existing_thread_retitle_attempt(thread_id)
                 return

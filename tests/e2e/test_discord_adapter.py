@@ -14,6 +14,7 @@ import pytest
 from plugins.platforms.discord.adapter import (
     _apply_discord_thread_title_prefix,
     _derive_auto_thread_title,
+    _ensure_discord_thread_title_emoji,
     _extract_bracketed_discord_thread_title_prefix,
     _normalize_discord_thread_title_prefix,
     _strip_leading_bracketed_discord_thread_title_prefix,
@@ -107,6 +108,10 @@ class TestAutoThreadTitleCleanup:
         title = _derive_auto_thread_title("여기서 로그인 버그 봐줘")
         assert title == "🐛 로그인 버그"
 
+    def test_ensures_llm_generated_plain_text_titles_get_contextual_emoji(self):
+        assert _ensure_discord_thread_title_emoji("배포 체크", "배포 체크 부탁해") == "🚀 배포 체크"
+        assert _ensure_discord_thread_title_emoji("[프로젝트A] 로그인 버그", "로그인 버그 봐줘") == "[프로젝트A] 🐛 로그인 버그"
+
 
 class TestThreadTitlePrefixHelpers:
     def test_normalizes_bare_or_bracketed_project_prefix(self):
@@ -162,7 +167,7 @@ class TestAutoThreadingPreservesCommand:
             mentions=[bot_user],
         )
         msg.create_thread = AsyncMock(return_value=fake_thread)
-        discord_adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
+        discord_adapter._generate_thread_title = AsyncMock(return_value="스레드 제목 개선")
 
         await dispatch(discord_adapter, msg)
 
@@ -211,7 +216,7 @@ class TestExistingThreadRetitle:
             channel=thread,
             mentions=[bot_user],
         )
-        discord_adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
+        discord_adapter._generate_thread_title = AsyncMock(return_value="스레드 제목 개선")
 
         await dispatch(discord_adapter, msg)
 
@@ -250,7 +255,7 @@ class TestExistingThreadRetitle:
             channel=thread,
             mentions=[bot_user],
         )
-        discord_adapter._generate_thread_title = AsyncMock(return_value="🧵 스레드 제목 개선")
+        discord_adapter._generate_thread_title = AsyncMock(return_value="스레드 제목 개선")
 
         await dispatch(discord_adapter, msg)
 
