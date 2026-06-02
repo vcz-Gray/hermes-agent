@@ -75,3 +75,13 @@ models-dev-upstream/
 hermes_cli/tui_dist/*
 hermes_cli/scripts/
 docs/superpowers/*
+
+# Local desktop build artifacts
+/apps/desktop/build/
+/apps/desktop/dist/
+/apps/desktop/release/
+/apps/desktop/tsconfig.tsbuildinfo
+
+# Local temporary notes / bootstrap markers
+/.tmp/
+/.hermes-bootstrap-complete
