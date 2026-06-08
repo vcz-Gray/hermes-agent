@@ -108,6 +108,14 @@ class TestAutoThreadTitleCleanup:
         title = _derive_auto_thread_title("여기서 로그인 버그 봐줘")
         assert title == "🐛 로그인 버그"
 
+    def test_caps_fallback_thread_titles_to_short_discord_friendly_length(self):
+        title = _derive_auto_thread_title(
+            "헤르메스야 이 채널에서 매우아주엄청긴배포체크제목을자연스럽게정리해줘"
+        )
+        assert title.startswith("🚀 ")
+        assert len(title) <= 15
+        assert title.endswith("…")
+
     def test_ensures_llm_generated_plain_text_titles_get_contextual_emoji(self):
         assert _ensure_discord_thread_title_emoji("배포 체크", "배포 체크 부탁해") == "🚀 배포 체크"
         assert _ensure_discord_thread_title_emoji("[프로젝트A] 로그인 버그", "로그인 버그 봐줘") == "[프로젝트A] 🐛 로그인 버그"

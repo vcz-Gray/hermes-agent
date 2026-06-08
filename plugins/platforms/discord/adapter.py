@@ -344,10 +344,11 @@ def _derive_auto_thread_title(raw_content: str) -> str:
     if not content:
         return "💬 Hermes"
 
-    # Keep fallback names compact because Discord thread lists are narrow. The
-    # LLM path is preferred for semantics; fallback preserves the key noun.
+    # Keep fallback names very compact because Discord thread lists are narrow
+    # and this deployment expects short, title-like labels rather than long
+    # request-shaped sentences. Preserve the key noun and cap aggressively.
     emoji = _select_auto_thread_title_emoji(content)
-    max_title_len = 30
+    max_title_len = 15
     prefix = f"{emoji} "
     allowed = max(4, max_title_len - len(prefix))
     if len(content) > allowed:
