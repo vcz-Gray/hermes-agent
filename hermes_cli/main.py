@@ -8834,6 +8834,45 @@ def _cmd_update_impl(args, gateway_mode: bool):
             logger.debug("Could not read updates.non_interactive_local_changes: %s", exc)
             discard_local_changes = False
 
+    def _sync_profile_config_migrations() -> None:
+        """Apply the safe non-interactive config migration pass to every profile."""
+        try:
+            from hermes_cli.profiles import list_profiles, migrate_profile_config
+
+            all_profiles = list_profiles()
+            if all_profiles:
+                print()
+                print("→ Syncing config migrations to all profiles...")
+                for p in all_profiles:
+                    try:
+                        r = migrate_profile_config(p.path, quiet=True)
+                        if not r:
+                            status = "sync failed"
+                        elif r.get("status") == "needs_manual_env":
+                            missing_env = r.get("missing_env_after", [])
+                            suffix = f" (manual env: {', '.join(missing_env[:3])})" if missing_env else ""
+                            status = f"needs manual env{suffix}"
+                        elif r.get("status") == "migrated":
+                            env_added = len(r.get("env_added", []))
+                            cfg_added = len(r.get("config_added", []))
+                            parts = []
+                            if cfg_added:
+                                parts.append(f"+{cfg_added} config")
+                            if env_added:
+                                parts.append(f"+{env_added} env")
+                            if not parts and r.get("before_version") != r.get("after_version"):
+                                before = r.get("before_version", ["?", "?"])
+                                after = r.get("after_version", ["?", "?"])
+                                parts.append(f"v{before[0]}→v{after[0]}")
+                            status = ", ".join(parts) if parts else "migrated"
+                        else:
+                            status = "up to date"
+                        print(f"  {p.name}: {status}")
+                    except Exception as pe:
+                        print(f"  {p.name}: error ({pe})")
+        except Exception:
+            pass
+
     print("⚕ Updating Hermes Agent...")
     print()
 
@@ -9064,6 +9103,8 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     text=True,
                     check=False,
                 )
+            _sync_profile_config_migrations()
+            print()
             print("✓ Already up to date!")
             _resume_windows_gateways_after_update(_windows_gateway_resume)
             return
@@ -9556,42 +9597,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # Non-interactive migration keeps defaults/version bumps aligned
         # everywhere while still surfacing profiles that need manual API-key
         # entry afterward.
-        try:
-            from hermes_cli.profiles import list_profiles, migrate_profile_config
-
-            all_profiles = list_profiles()
-            if all_profiles:
-                print()
-                print("→ Syncing config migrations to all profiles...")
-                for p in all_profiles:
-                    try:
-                        r = migrate_profile_config(p.path, quiet=True)
-                        if not r:
-                            status = "sync failed"
-                        elif r.get("status") == "needs_manual_env":
-                            missing_env = r.get("missing_env_after", [])
-                            suffix = f" (manual env: {', '.join(missing_env[:3])})" if missing_env else ""
-                            status = f"needs manual env{suffix}"
-                        elif r.get("status") == "migrated":
-                            env_added = len(r.get("env_added", []))
-                            cfg_added = len(r.get("config_added", []))
-                            parts = []
-                            if cfg_added:
-                                parts.append(f"+{cfg_added} config")
-                            if env_added:
-                                parts.append(f"+{env_added} env")
-                            if not parts and r.get("before_version") != r.get("after_version"):
-                                before = r.get("before_version", ["?", "?"])
-                                after = r.get("after_version", ["?", "?"])
-                                parts.append(f"v{before[0]}→v{after[0]}")
-                            status = ", ".join(parts) if parts else "migrated"
-                        else:
-                            status = "up to date"
-                        print(f"  {p.name}: {status}")
-                    except Exception as pe:
-                        print(f"  {p.name}: error ({pe})")
-        except Exception:
-            pass
+        _sync_profile_config_migrations()
 
         # Safety net: config-version migrations have been observed to leave
         # cron/jobs.json valid-but-empty, silently dropping every scheduled

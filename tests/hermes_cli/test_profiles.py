@@ -35,6 +35,7 @@ from hermes_cli.profiles import (
     has_bundled_skills_opt_out,
     NO_BUNDLED_SKILLS_MARKER,
     backfill_profile_envs,
+    migrate_profile_config,
     profiles_to_serve,
 )
 from hermes_cli.config import DEFAULT_CONFIG
@@ -545,6 +546,48 @@ class TestBackfillProfileEnvs:
 
     def test_no_profiles_root_is_noop(self, profile_env):
         assert backfill_profile_envs(quiet=True) == []
+
+
+class TestMigrateProfileConfig:
+    def test_parses_subprocess_summary_and_sets_profile_home(self, profile_env, monkeypatch):
+        import subprocess
+
+        profile_dir = create_profile("mig", no_alias=True)
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["env"] = kwargs.get("env", {})
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout=json.dumps(
+                    {
+                        "status": "migrated",
+                        "migration_ran": True,
+                        "before_version": [23, 30],
+                        "after_version": [30, 30],
+                        "missing_env_before": [],
+                        "missing_env_after": [],
+                        "missing_config_before": ["foo.bar"],
+                        "missing_config_after": [],
+                        "env_added": [],
+                        "config_added": ["foo.bar"],
+                        "warnings": [],
+                    }
+                ),
+                stderr="",
+            )
+
+        monkeypatch.setattr("hermes_cli.profiles.subprocess.run", fake_run)
+
+        result = migrate_profile_config(profile_dir, quiet=True)
+
+        assert seen["cmd"][1] == "-c"
+        assert seen["env"]["HERMES_HOME"] == str(profile_dir)
+        assert result is not None
+        assert result["status"] == "migrated"
+        assert result["config_added"] == ["foo.bar"]
 
 
 # ===================================================================

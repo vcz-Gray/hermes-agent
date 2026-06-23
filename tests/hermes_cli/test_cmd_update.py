@@ -178,6 +178,45 @@ class TestCmdUpdateBranchFallback:
 
     @patch("shutil.which", return_value=None)
     @patch("subprocess.run")
+    def test_update_already_up_to_date_still_syncs_profile_config_migrations(
+        self, mock_run, _mock_which, mock_args, capsys
+    ):
+        from types import SimpleNamespace
+
+        mock_run.side_effect = _make_run_side_effect(
+            branch="main", verify_ok=True, commit_count="0"
+        )
+        all_profiles = [
+            SimpleNamespace(name="default", path=PROJECT_ROOT),
+            SimpleNamespace(name="discord-open", path=PROJECT_ROOT / "profiles" / "discord-open"),
+        ]
+        migrated_paths = []
+
+        def fake_migrate(path, quiet=True):
+            migrated_paths.append(path)
+            return {
+                "status": "up_to_date",
+                "env_added": [],
+                "config_added": [],
+                "before_version": [30, 30],
+                "after_version": [30, 30],
+                "missing_env_after": [],
+            }
+
+        with (
+            patch("hermes_cli.profiles.list_profiles", return_value=all_profiles),
+            patch("hermes_cli.profiles.migrate_profile_config", side_effect=fake_migrate),
+        ):
+            cmd_update(mock_args)
+
+        assert migrated_paths == [p.path for p in all_profiles]
+        out = capsys.readouterr().out
+        assert "Syncing config migrations to all profiles" in out
+        assert "default: up to date" in out
+        assert "discord-open: up to date" in out
+
+    @patch("shutil.which", return_value=None)
+    @patch("subprocess.run")
     def test_update_on_fork_checks_upstream_when_origin_up_to_date(
         self, mock_run, _mock_which, mock_args, capsys
     ):

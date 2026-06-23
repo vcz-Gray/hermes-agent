@@ -1071,36 +1071,33 @@ def migrate_profile_config(profile_dir: Path, quiet: bool = False) -> Optional[d
     ``None`` on failure.
     """
     project_root = Path(__file__).parent.parent.resolve()
-    script = (
-        "import json; "
-        "from hermes_cli.config import "
-        "get_missing_env_vars, get_missing_config_fields, check_config_version, migrate_config; "
-        "before_env = get_missing_env_vars(required_only=True); "
-        "before_cfg = get_missing_config_fields(); "
-        "before_ver = check_config_version(); "
-        "needs = bool(before_env or before_cfg or before_ver[0] < before_ver[1]); "
-        "migration = {'env_added': [], 'config_added': [], 'warnings': []}; "
-        "migration_ran = False; "
-        "if needs: "
-        "    migration = migrate_config(interactive=False, quiet=True) or migration; "
-        "    migration_ran = True; "
-        "after_env = get_missing_env_vars(required_only=True); "
-        "after_cfg = get_missing_config_fields(); "
-        "after_ver = check_config_version(); "
-        "status = ('needs_manual_env' if after_env else ('migrated' if migration_ran else 'up_to_date')); "
-        "print(json.dumps({"
-        "'status': status, "
-        "'migration_ran': migration_ran, "
-        "'before_version': list(before_ver), "
-        "'after_version': list(after_ver), "
-        "'missing_env_before': [item.get('name') for item in before_env], "
-        "'missing_env_after': [item.get('name') for item in after_env], "
-        "'missing_config_before': [item.get('key') for item in before_cfg], "
-        "'missing_config_after': [item.get('key') for item in after_cfg], "
-        "'env_added': migration.get('env_added', []), "
-        "'config_added': migration.get('config_added', []), "
-        "'warnings': migration.get('warnings', [])}, ensure_ascii=False))"
-    )
+    script = "\n".join([
+        "import json",
+        "from hermes_cli.config import get_missing_env_vars, get_missing_config_fields, check_config_version, migrate_config",
+        "before_env = get_missing_env_vars(required_only=True)",
+        "before_cfg = get_missing_config_fields()",
+        "before_ver = check_config_version()",
+        "needs = bool(before_env or before_cfg or before_ver[0] < before_ver[1])",
+        "migration = ((migrate_config(interactive=False, quiet=True) or {'env_added': [], 'config_added': [], 'warnings': []}) if needs else {'env_added': [], 'config_added': [], 'warnings': []})",
+        "migration_ran = bool(needs)",
+        "after_env = get_missing_env_vars(required_only=True)",
+        "after_cfg = get_missing_config_fields()",
+        "after_ver = check_config_version()",
+        "status = ('needs_manual_env' if after_env else ('migrated' if migration_ran else 'up_to_date'))",
+        "print(json.dumps({",
+        "    'status': status,",
+        "    'migration_ran': migration_ran,",
+        "    'before_version': list(before_ver),",
+        "    'after_version': list(after_ver),",
+        "    'missing_env_before': [item.get('name') for item in before_env],",
+        "    'missing_env_after': [item.get('name') for item in after_env],",
+        "    'missing_config_before': [item.get('key') for item in before_cfg],",
+        "    'missing_config_after': [item.get('key') for item in after_cfg],",
+        "    'env_added': migration.get('env_added', []),",
+        "    'config_added': migration.get('config_added', []),",
+        "    'warnings': migration.get('warnings', []),",
+        "}, ensure_ascii=False))",
+    ])
     try:
         result = subprocess.run(
             [sys.executable, "-c", script],
