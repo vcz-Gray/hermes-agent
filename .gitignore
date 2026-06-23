@@ -112,6 +112,18 @@ docs/superpowers/*
 # Local temporary notes / bootstrap markers
 /.tmp/
 /.hermes-bootstrap-complete
+/.cron_gling_availability_state.json
+/.gling_monitor_state
+/.gling_site_monitor_state.json
+/.monitor-state/
+/.solto_erp_monitor_state
+/docs/hermes-workshop/
+/reports/
+/dreami-life-flow-*.md
+/dreami-saju-life-flow.html
+/park-ha-yoon-life-flow-*.md
+/park-ha-yoon-saju-life-flow.html
+/박규하-김은정-박하윤-만세력기준데이터.json
 
 # Working directory for the Hermes Agent's session state (~/.hermes/ at runtime;
 # also created in-repo when an agent operates in this checkout). Plans, audit

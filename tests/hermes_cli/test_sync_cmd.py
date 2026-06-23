@@ -19,7 +19,7 @@ def test_cmd_sync_happy_path(monkeypatch, capsys):
         calls.append(list(cmd))
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return _cp(cmd, stdout="/repo\n")
-        if cmd[:3] == ["git", "status", "--porcelain"]:
+        if cmd[:4] == ["git", "status", "--porcelain", "--untracked-files=no"]:
             return _cp(cmd, stdout="")
         if cmd[:4] == ["git", "symbolic-ref", "--quiet", "--short"]:
             return _cp(cmd, stdout="viewcommz-main\n")
@@ -49,20 +49,56 @@ def test_cmd_sync_happy_path(monkeypatch, capsys):
     assert "run 'hermes update'" in out
 
 
-def test_cmd_sync_refuses_dirty_worktree(monkeypatch):
+def test_cmd_sync_refuses_tracked_changes(monkeypatch):
     from hermes_cli import sync_cmd as mod
 
     def fake_run(cmd, **kwargs):
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return _cp(cmd, stdout="/repo\n")
-        if cmd[:3] == ["git", "status", "--porcelain"]:
+        if cmd[:4] == ["git", "status", "--porcelain", "--untracked-files=no"]:
             return _cp(cmd, stdout=" M hermes_cli/main.py\n")
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    with pytest.raises(SystemExit, match="working tree is not clean"):
+    with pytest.raises(SystemExit, match="tracked changes are present"):
         mod.cmd_sync(Namespace())
+
+
+def test_cmd_sync_allows_untracked_files(monkeypatch, capsys):
+    from hermes_cli import sync_cmd as mod
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return _cp(cmd, stdout="/repo\n")
+        if cmd[:4] == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return _cp(cmd, stdout="")
+        if cmd[:4] == ["git", "symbolic-ref", "--quiet", "--short"]:
+            return _cp(cmd, stdout="viewcommz-main\n")
+        if cmd[:4] == ["git", "remote", "get-url", "origin"]:
+            return _cp(cmd, stdout="git@github.com:vcz-Gray/hermes-agent.git\n")
+        if cmd[:4] == ["git", "remote", "get-url", "upstream"]:
+            return _cp(cmd, stdout="git@github.com:NousResearch/hermes-agent.git\n")
+        if cmd[:4] == ["git", "symbolic-ref", "refs/remotes/upstream/HEAD"]:
+            return _cp(cmd, stdout="refs/remotes/upstream/main\n")
+        if cmd[:3] == ["git", "fetch", "upstream"]:
+            return _cp(cmd)
+        if cmd[:2] == ["git", "merge"]:
+            return _cp(cmd)
+        if cmd[:2] == ["git", "push"]:
+            return _cp(cmd)
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    mod.cmd_sync(Namespace())
+
+    assert ["git", "status", "--porcelain", "--untracked-files=no"] in calls
+    out = capsys.readouterr().out
+    assert "Synced branch 'viewcommz-main' from upstream/main" in out
 
 
 def test_cmd_sync_refuses_missing_upstream(monkeypatch):
@@ -71,7 +107,7 @@ def test_cmd_sync_refuses_missing_upstream(monkeypatch):
     def fake_run(cmd, **kwargs):
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return _cp(cmd, stdout="/repo\n")
-        if cmd[:3] == ["git", "status", "--porcelain"]:
+        if cmd[:4] == ["git", "status", "--porcelain", "--untracked-files=no"]:
             return _cp(cmd, stdout="")
         if cmd[:4] == ["git", "symbolic-ref", "--quiet", "--short"]:
             return _cp(cmd, stdout="viewcommz-main\n")
@@ -93,7 +129,7 @@ def test_cmd_sync_refuses_detached_head(monkeypatch):
     def fake_run(cmd, **kwargs):
         if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
             return _cp(cmd, stdout="/repo\n")
-        if cmd[:3] == ["git", "status", "--porcelain"]:
+        if cmd[:4] == ["git", "status", "--porcelain", "--untracked-files=no"]:
             return _cp(cmd, stdout="")
         if cmd[:4] == ["git", "symbolic-ref", "--quiet", "--short"]:
             return _cp(cmd, returncode=1, stderr="detached HEAD\n")

@@ -37,10 +37,13 @@ def ensure_git_repo() -> None:
 
 
 def assert_clean_worktree() -> None:
-    proc = run_git(["status", "--porcelain"])
+    # Allow purely local untracked outputs (reports, state files, scratch docs)
+    # so fork sync is not blocked by repo-adjacent runtime noise. We still
+    # require tracked files and the index to be clean before merging/pushing.
+    proc = run_git(["status", "--porcelain", "--untracked-files=no"])
     if proc.stdout.strip():
         raise SyncError(
-            "Refusing to sync: working tree is not clean. Commit, stash, or discard changes first."
+            "Refusing to sync: tracked changes are present. Commit, stash, or discard them first."
         )
 
 
