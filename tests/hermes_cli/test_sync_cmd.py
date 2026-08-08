@@ -49,6 +49,43 @@ def test_cmd_sync_happy_path(monkeypatch, capsys):
     assert "run 'hermes update'" in out
 
 
+def test_cmd_sync_aborts_merge_and_leaves_checkout_recoverable_on_conflict(monkeypatch):
+    from hermes_cli import sync_cmd as mod
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            return _cp(cmd, stdout="/repo\n")
+        if cmd[:4] == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return _cp(cmd, stdout="")
+        if cmd[:4] == ["git", "symbolic-ref", "--quiet", "--short"]:
+            return _cp(cmd, stdout="viewcommz-main\n")
+        if cmd[:4] == ["git", "remote", "get-url", "origin"]:
+            return _cp(cmd, stdout="git@github.com:vcz-Gray/hermes-agent.git\n")
+        if cmd[:4] == ["git", "remote", "get-url", "upstream"]:
+            return _cp(cmd, stdout="git@github.com:NousResearch/hermes-agent.git\n")
+        if cmd[:3] == ["git", "fetch", "upstream"]:
+            return _cp(cmd)
+        if cmd[:4] == ["git", "symbolic-ref", "refs/remotes/upstream/HEAD"]:
+            return _cp(cmd, stdout="refs/remotes/upstream/main\n")
+        if cmd == ["git", "merge", "--abort"]:
+            return _cp(cmd)
+        if cmd[:2] == ["git", "merge"]:
+            return _cp(cmd, returncode=1, stderr="CONFLICT (content): Merge conflict\n")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit, match="merge from upstream/main failed"):
+        mod.cmd_sync(Namespace())
+
+    assert ["git", "merge", "--no-edit", "upstream/main"] in calls
+    assert ["git", "merge", "--abort"] in calls
+    assert not any(cmd[:2] == ["git", "push"] for cmd in calls)
+
+
 def test_cmd_sync_refuses_tracked_changes(monkeypatch):
     from hermes_cli import sync_cmd as mod
 
