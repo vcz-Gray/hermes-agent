@@ -4820,7 +4820,7 @@ def _cmd_skill_sync(args):
 
 def cmd_sync(args):
     """Sync the operator fork when bare; retain upstream Skill Sync subcommands."""
-    if getattr(args, "sync_command", None) in {None, ""}:
+    if getattr(args, "sync_command", None) in {None, "", "upstream"}:
         from hermes_cli.sync_cmd import cmd_sync as cmd_repo_sync
 
         return cmd_repo_sync(args)

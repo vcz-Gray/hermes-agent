@@ -52,6 +52,10 @@ def build_sync_parser(subparsers, *, cmd_sync: Callable) -> None:
     )
     sync_sub = sync_parser.add_subparsers(dest="sync_command")
 
+    sync_sub.add_parser(
+        "upstream",
+        help="Explicit alias for bare fork sync: merge upstream and push origin",
+    )
     sync_sub.add_parser("status", help="Show what is synced, and from where")
     sync_sub.add_parser(
         "pull", help="Pull your synced skills (and your organisation's)"

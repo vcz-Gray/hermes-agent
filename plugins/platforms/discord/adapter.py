@@ -7771,6 +7771,7 @@ class DiscordAdapter(BasePlatformAdapter):
                 is_thread
                 and thread_id in self._threads
                 and not self._discord_thread_require_mention()
+                and not getattr(message.author, "bot", False)
             )
 
             if require_mention and not is_free_channel and not in_bot_thread:
@@ -8152,9 +8153,9 @@ class DiscordAdapter(BasePlatformAdapter):
             channel_context=_channel_context,
         )
 
-        # Track thread participation so the bot won't require @mention for
-        # follow-up messages in threads it has already engaged in.
-        if thread_id:
+        # Track only human thread participation. Bot-authored messages must not
+        # create durable mention bypasses that can turn reply metadata into loops.
+        if thread_id and not getattr(message.author, "bot", False):
             self._threads.mark(thread_id)
 
         # Only live plain text messages use split-message batching. Recovery

@@ -97,7 +97,7 @@ hermes [global-options] <command> [subcommand/options]
 | `hermes profile` | Manage profiles — multiple isolated Hermes instances. |
 | `hermes completion` | Print shell completion scripts (bash/zsh/fish). |
 | `hermes version` | Show version information. |
-| `hermes sync` | With no subcommand, merge `upstream` into the current operator fork and push `origin`; subcommands manage Skill Sync. |
+| `hermes sync` | With no subcommand, merge `upstream` into the current operator fork and push `origin`; `hermes sync upstream` is the explicit alias, while other subcommands manage Skill Sync. |
 | `hermes update` | Pull latest code and reinstall dependencies. `--check` previews without installing; `--backup` takes a pre-pull `HERMES_HOME` snapshot. |
 | `hermes uninstall` | Remove Hermes from the system. |
 

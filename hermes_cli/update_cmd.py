@@ -3851,11 +3851,10 @@ def _cmd_update_impl(args, gateway_mode: bool):
         else:
             auto_stash_ref = _m()._stash_local_changes_if_needed(git_cmd, _m().PROJECT_ROOT)
 
-        prompt_for_restore = (
-            auto_stash_ref is not None
-            and not assume_yes
-            and (gateway_mode or (sys.stdin.isatty() and sys.stdout.isatty()))
-        )
+        # Fork policy: update autostashes are always restored automatically.
+        # Hermes created this stash solely to protect local source edits during
+        # update, so normal maintenance must not leave those edits hidden.
+        prompt_for_restore = False
 
         # Check if there are updates
         result = subprocess.run(
