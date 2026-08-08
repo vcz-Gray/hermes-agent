@@ -83,8 +83,18 @@ def perform_sync() -> tuple[str, str]:
     try:
         run_git(["merge", "--no-edit", f"upstream/{upstream_branch}"])
     except SyncError as exc:
+        # A failed merge leaves conflict markers in the live checkout. Hermes
+        # imports from that checkout, so restore the pre-sync state before
+        # reporting the conflict instead of leaving the CLI/gateway unusable.
+        rollback = run_git(["merge", "--abort"], check=False)
+        if rollback.returncode != 0:
+            raise SyncError(
+                f"Sync stopped: merge from upstream/{upstream_branch} failed and automatic rollback failed. "
+                "Resolve conflicts manually before using Hermes again."
+            ) from exc
         raise SyncError(
-            f"Sync stopped: merge from upstream/{upstream_branch} failed. Resolve conflicts manually, then rerun 'hermes sync'."
+            f"Sync stopped: merge from upstream/{upstream_branch} failed; the checkout was restored. "
+            "Resolve the upstream conflicts on a branch, then rerun 'hermes sync'."
         ) from exc
     try:
         run_git(["push", "origin", branch])
